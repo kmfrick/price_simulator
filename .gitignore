@@ -124,3 +124,9 @@ venv.bak/
 # pycharm stuff
 .DS_Store
 .idea
+
+# Virtual environment
+venv/
+
+# Output
+*artifacts/

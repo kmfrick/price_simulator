@@ -1,0 +1,50 @@
+# Matplotlib configuration file
+# This file is placed in the root of the project to provide consistent styling for plots.
+
+font.size: 14
+font.family: serif
+text.usetex: True
+
+# Figure settings
+figure.figsize: 8, 4
+figure.dpi: 300
+figure.autolayout: True
+
+# Axes settings
+axes.labelsize: 14
+axes.titlesize: 14
+axes.grid: False
+axes.edgecolor: 0
+axes.linewidth: 1
+axes.xmargin   : 0.01  # Default is 0.05
+
+# Grid settings
+grid.color: 0.8
+grid.linestyle: -
+grid.linewidth: 0.5
+
+# Tick settings
+xtick.labelsize: 14
+ytick.labelsize: 14
+xtick.direction : out
+ytick.direction : out
+
+# Line settings
+lines.linewidth: 2
+lines.markersize : 10 # Bigger dots
+
+# Legend settings
+legend.fontsize: 14
+legend.frameon: True
+legend.edgecolor: 0.8
+figure.subplot.bottom: 0.2
+legend.fancybox: False
+legend.shadow: False
+legend.loc: lower right
+
+# Savefig settings
+savefig.dpi: 300
+savefig.format: png
+savefig.bbox: tight
+savefig.transparent: False
+

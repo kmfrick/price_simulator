@@ -25,7 +25,7 @@ class EquilibriumCalculator(object):
     ) -> float:
         """Calculate profit for ith firm if it sets his price to own_price given competitor prices."""
         temp_prices = copy.deepcopy(prices)
-        temp_prices[i] = own_price
+        temp_prices[i] = own_price.item()
         return -1 * (temp_prices[i] - marginal_costs[i]) * self.demand.get_quantities(temp_prices, qualities)[i]
 
     def reaction_function(self, prices: np.array, qualities: np.array, marginal_costs: np.array, i: float) -> float:

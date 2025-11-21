@@ -1,29 +1,26 @@
-import pickle
+from __future__ import annotations
+
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Dict, List, Optional
+
+import numpy as np
 
 
-def load_object(filename):
-    """ Unpickle a file of pickled data. """
-    with open(filename, "rb") as f:
-        return pickle.load(f)
-
-
-def load_multiple_objects(filename):
-    """ Stream a file of pickled objects. """
-    with open(filename, "rb") as f:
-        while True:
-            try:
-                yield pickle.load(f)
-            except EOFError:
-                break
-
-
-def save_object(obj, filename):
-    """ Pickle a python object to filename.pkl . """
-    with open(filename, "wb") as output:
-        pickle.dump(obj, output, pickle.HIGHEST_PROTOCOL)
-
-
-def add_object(obj, filename):
-    """ Add a python object to filename.pkl . """
-    with open(filename, "ab") as output:
-        pickle.dump(obj, output, pickle.HIGHEST_PROTOCOL)
+@dataclass
+class SimulationRun:
+    run_id: str
+    final_actor_paths: List[Path]
+    final_critic1_paths: List[Path]
+    final_critic2_paths: List[Path]
+    prices: np.ndarray
+    profits: np.ndarray
+    grad_norm: np.ndarray
+    average_reward: np.ndarray
+    q_baseline: np.ndarray
+    policy_loss: np.ndarray
+    policy_entropy: np.ndarray
+    q_loss: np.ndarray
+    temperature: np.ndarray
+    policy_kl: Optional[np.ndarray]
+    checkpoints: List[Dict[str, object]]
