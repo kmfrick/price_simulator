@@ -46,16 +46,26 @@ class DQN(AgentStrategy):
 
     def who_am_i(self) -> str:
         # TODO better who am i
-        return type(self).__name__ + " (gamma: {}, alpha: {}, policy: {}, quality: {}, mc: {})".format(
-            self.discount, self.learning_rate, self.decision.who_am_i(), self.quality, self.marginal_cost
+        return type(
+            self
+        ).__name__ + " (gamma: {}, alpha: {}, policy: {}, quality: {}, mc: {})".format(
+            self.discount,
+            self.learning_rate,
+            self.decision.who_am_i(),
+            self.quality,
+            self.marginal_cost,
         )
 
-    def play_price(self, state: Tuple[float], action_space: List[float], n_period: int, t: int) -> float:
+    def play_price(
+        self, state: Tuple[float], action_space: List[float], n_period: int, t: int
+    ) -> float:
         """Returns an action by either following greedy policy or experimentation."""
 
         # init q networks if necessary
         if not self.qnetwork_target or not self.qnetwork_local:
-            self.qnetwork_target = self.initialize_network(len(state), len(action_space))
+            self.qnetwork_target = self.initialize_network(
+                len(state), len(action_space)
+            )
             self.qnetwork_local = self.initialize_network(len(state), len(action_space))
             self.qnetwork_target.set_weights(self.qnetwork_local.get_weights())
 
@@ -63,7 +73,9 @@ class DQN(AgentStrategy):
         if self.decision.explore(n_period, t):
             return random.choice(action_space)
         else:
-            action_values = self.qnetwork_local.predict(np.expand_dims(self.scale(state, action_space), axis=0))
+            action_values = self.qnetwork_local.predict(
+                np.expand_dims(self.scale(state, action_space), axis=0)
+            )
             if sum(np.isclose(action_values[0], action_values[0].max())) > 1:
                 optimal_action_index = np.random.choice(
                     np.flatnonzero(np.isclose(action_values[0], action_values[0].max()))
@@ -90,12 +102,15 @@ class DQN(AgentStrategy):
         self.replay_memory.add(state, action, reward, next_state)
 
         if len(self.replay_memory) > self.batch_size:
-
             # get training sample
-            states, actions, rewards, next_states = self.replay_memory.sample(self.batch_size)
+            states, actions, rewards, next_states = self.replay_memory.sample(
+                self.batch_size
+            )
 
             # Get max predicted Q values (for next states) from target model
-            next_optimal_q = np.amax(self.qnetwork_target.predict(next_states), axis=1, keepdims=True)
+            next_optimal_q = np.amax(
+                self.qnetwork_target.predict(next_states), axis=1, keepdims=True
+            )
 
             # Compute Q targets for current states
             targets = rewards + self.discount * next_optimal_q
@@ -103,10 +118,14 @@ class DQN(AgentStrategy):
             # Get current Q values from local model and update them
             # with better estimates (target) for the played actions
             local_estimates = self.qnetwork_local.predict(states)
-            local_estimates[np.arange(len(actions)), actions.flatten()] = targets.flatten()
+            local_estimates[np.arange(len(actions)), actions.flatten()] = (
+                targets.flatten()
+            )
 
             # perform gradient descent step on local network
-            self.qnetwork_local.fit(states, local_estimates, epochs=1, verbose=0, batch_size=self.batch_size)
+            self.qnetwork_local.fit(
+                states, local_estimates, epochs=1, verbose=0, batch_size=self.batch_size
+            )
 
             # update target_qnetwork after some periods
             self.update_counter += 1
@@ -129,7 +148,9 @@ class DQN(AgentStrategy):
         """Scale float input to range from 0 to 1."""
         max_action = max(action_space)
         min_action = min(action_space)
-        return np.multiply(np.divide(np.array(inputs) - min_action, max_action - min_action), 1)
+        return np.multiply(
+            np.divide(np.array(inputs) - min_action, max_action - min_action), 1
+        )
 
 
 @attr.s
@@ -141,8 +162,14 @@ class DiffDQN(DQN):
 
     def who_am_i(self) -> str:
         # TODO better who am i
-        return type(self).__name__ + " (lambda: {}, alpha: {}, policy: {}, quality: {}, mc: {})".format(
-            self.reward_step_size, self.learning_rate, self.decision.who_am_i(), self.quality, self.marginal_cost
+        return type(
+            self
+        ).__name__ + " (lambda: {}, alpha: {}, policy: {}, quality: {}, mc: {})".format(
+            self.reward_step_size,
+            self.learning_rate,
+            self.decision.who_am_i(),
+            self.quality,
+            self.marginal_cost,
         )
 
     def learn(
@@ -163,12 +190,15 @@ class DiffDQN(DQN):
         self.replay_memory.add(state, action, reward, next_state)
 
         if len(self.replay_memory) > self.batch_size:
-
             # get training sample
-            states, actions, rewards, next_states = self.replay_memory.sample(self.batch_size)
+            states, actions, rewards, next_states = self.replay_memory.sample(
+                self.batch_size
+            )
 
             # Get max predicted Q values (for next states) from target model
-            next_optimal_q = np.amax(self.qnetwork_target.predict(next_states), axis=1, keepdims=True)
+            next_optimal_q = np.amax(
+                self.qnetwork_target.predict(next_states), axis=1, keepdims=True
+            )
 
             # Compute Q targets for current states
             targets = rewards - self.average_reward + next_optimal_q
@@ -176,10 +206,14 @@ class DiffDQN(DQN):
             # Get current Q values from local model and update them
             # with better estimates (target) for the played actions
             local_estimates = self.qnetwork_local.predict(states)
-            local_estimates[np.arange(len(actions)), actions.flatten()] = targets.flatten()
+            local_estimates[np.arange(len(actions)), actions.flatten()] = (
+                targets.flatten()
+            )
 
             # perform gradient descent step on local network
-            self.qnetwork_local.fit(states, local_estimates, epochs=1, verbose=0, batch_size=self.batch_size)
+            self.qnetwork_local.fit(
+                states, local_estimates, epochs=1, verbose=0, batch_size=self.batch_size
+            )
 
             # update average reward
             self.average_reward = self.average_reward + self.reward_step_size * (
@@ -232,14 +266,17 @@ class DDQN(DiffDQN):
         self.replay_memory.add(state, action, reward, next_state)
 
         if len(self.replay_memory) > self.batch_size:
-
             # get training sample
-            states, actions, rewards, next_states = self.replay_memory.sample(self.batch_size)
+            states, actions, rewards, next_states = self.replay_memory.sample(
+                self.batch_size
+            )
 
             # Get max predicted Q values (for next states) from target model
 
             # Get optimal action according to loc
-            optimal_actions = np.argmax(self.qnetwork_local.predict(next_states), axis=1)
+            optimal_actions = np.argmax(
+                self.qnetwork_local.predict(next_states), axis=1
+            )
             next_optimal_q = self.qnetwork_target.predict(next_states)[
                 np.arange(np.shape(states)[0]), optimal_actions.flatten()
             ]
@@ -251,10 +288,14 @@ class DDQN(DiffDQN):
             # Get current Q values from local model and update them
             # with better estimates (target) for the played actions
             local_estimates = self.qnetwork_local.predict(states)
-            local_estimates[np.arange(len(actions)), actions.flatten()] = targets.flatten()
+            local_estimates[np.arange(len(actions)), actions.flatten()] = (
+                targets.flatten()
+            )
 
             # perform gradient descent step on local network
-            self.qnetwork_local.fit(states, local_estimates, epochs=1, verbose=0, batch_size=self.batch_size)
+            self.qnetwork_local.fit(
+                states, local_estimates, epochs=1, verbose=0, batch_size=self.batch_size
+            )
 
             # update average reward
             self.average_reward = self.average_reward + self.reward_step_size * (

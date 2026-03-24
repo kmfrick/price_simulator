@@ -20,7 +20,9 @@ class PrisonersDilemmaDemand(MarketDemandStrategy):
     """Market demand modulation for prisoners dilemma"""
 
     def get_quantities(self, prices: Tuple, qualities: Tuple) -> Tuple:
-        assert len(prices) == 2, "Prisoners dilemma could only be played with two agents"
+        assert len(prices) == 2, (
+            "Prisoners dilemma could only be played with two agents"
+        )
         if prices[0] == prices[1]:
             return 0.5, 0.5
         elif prices[0] > prices[1]:
@@ -42,10 +44,16 @@ class LogitDemand(MarketDemandStrategy):
             raise ValueError("Price Sensitivity must lie above 0.005")
 
     def get_quantities(self, prices: Tuple, qualities: Tuple) -> Tuple:
-        denominator = sum((math.exp((a - p) / self.price_sensitivity) for a, p in zip(qualities, prices))) + math.exp(
-            self.outside_quality / self.price_sensitivity
+        denominator = sum(
+            (
+                math.exp((a - p) / self.price_sensitivity)
+                for a, p in zip(qualities, prices)
+            )
+        ) + math.exp(self.outside_quality / self.price_sensitivity)
+        return tuple(
+            math.exp((a - p) / self.price_sensitivity) / denominator
+            for a, p in zip(qualities, prices)
         )
-        return tuple(math.exp((a - p) / self.price_sensitivity) / denominator for a, p in zip(qualities, prices))
 
 
 @attr.s

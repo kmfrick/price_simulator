@@ -22,16 +22,28 @@ def test_add_and_sample():
     next_states = np.array([[4, 4, 4]] * 20)
     buffer = ReplayBuffer(buffer_size=100)
     for _ in range(100):
-        buffer.add(state=[1, 1, 1], action=[2, 2, 2], reward=[3, 3, 3], next_state=[4, 4, 4])
+        buffer.add(
+            state=[1, 1, 1], action=[2, 2, 2], reward=[3, 3, 3], next_state=[4, 4, 4]
+        )
     assert len(buffer) == 100
-    assert np.array(buffer.sample(batch_size=20) == np.array([states, actions, rewards, next_states])).all()
+    assert np.array(
+        buffer.sample(batch_size=20)
+        == np.array([states, actions, rewards, next_states])
+    ).all()
 
     buffer = ReplayBuffer(buffer_size=10)
     for _ in range(10):
-        buffer.add(state=[1, 1, 1], action=[2, 2, 2], reward=[3, 3, 3], next_state=[4, 4, 4])
-    buffer.add(state=[100, 1, 1], action=[2, 2, 2], reward=[3, 3, 3], next_state=[4, 4, 4])
+        buffer.add(
+            state=[1, 1, 1], action=[2, 2, 2], reward=[3, 3, 3], next_state=[4, 4, 4]
+        )
+    buffer.add(
+        state=[100, 1, 1], action=[2, 2, 2], reward=[3, 3, 3], next_state=[4, 4, 4]
+    )
     assert len(buffer) == 10
-    assert np.array(buffer.sample(batch_size=10) != np.array([states, actions, rewards, next_states])).all()
+    assert np.array(
+        buffer.sample(batch_size=10)
+        != np.array([states, actions, rewards, next_states])
+    ).all()
 
 
 def test_factory_init():
@@ -44,6 +56,15 @@ def test_factory_init():
         ],
     )
     env.play_game()
-    assert np.array(env.agents[0].replay_memory.sample(1)[0] == env.agents[1].replay_memory.sample(1)[0]).all()
-    assert np.array(env.agents[0].replay_memory.sample(1)[3] == env.agents[1].replay_memory.sample(1)[3]).all()
-    assert np.array(env.agents[0].replay_memory.sample(1)[2] != env.agents[1].replay_memory.sample(1)[2]).all()
+    assert np.array(
+        env.agents[0].replay_memory.sample(1)[0]
+        == env.agents[1].replay_memory.sample(1)[0]
+    ).all()
+    assert np.array(
+        env.agents[0].replay_memory.sample(1)[3]
+        == env.agents[1].replay_memory.sample(1)[3]
+    ).all()
+    assert np.array(
+        env.agents[0].replay_memory.sample(1)[2]
+        != env.agents[1].replay_memory.sample(1)[2]
+    ).all()

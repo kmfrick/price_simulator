@@ -17,7 +17,9 @@ class ReplayBuffer:
         if buffer_size is None:
             self.buffer_size = 10000
         self.memory = deque(maxlen=buffer_size)
-        self.experience = namedtuple("Experience", field_names=["state", "action", "reward", "next_state"])
+        self.experience = namedtuple(
+            "Experience", field_names=["state", "action", "reward", "next_state"]
+        )
 
     def add(self, state, action, reward, next_state):
         """Add a new experience to memory."""

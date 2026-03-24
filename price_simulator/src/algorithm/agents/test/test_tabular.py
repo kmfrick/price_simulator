@@ -42,13 +42,17 @@ def test_initialize_q_matrix():
     }
 
     # 3 actions
-    q_matrix = Qlearning().initialize_q_matrix(n_agents=1, actions_space=[1.0, 2.0, 3.0])
+    q_matrix = Qlearning().initialize_q_matrix(
+        n_agents=1, actions_space=[1.0, 2.0, 3.0]
+    )
     assert q_matrix == {
         (1.0,): {1.0: 0.0, 2.0: 0.0, 3.0: 0.0},
         (2.0,): {1.0: 0.0, 2.0: 0.0, 3.0: 0.0},
         (3.0,): {1.0: 0.0, 2.0: 0.0, 3.0: 0.0},
     }
-    q_matrix = Qlearning().initialize_q_matrix(n_agents=2, actions_space=[1.0, 2.0, 3.0])
+    q_matrix = Qlearning().initialize_q_matrix(
+        n_agents=2, actions_space=[1.0, 2.0, 3.0]
+    )
     assert q_matrix == {
         (1.0, 1.0): {1.0: 0.0, 2.0: 0.0, 3.0: 0.0},
         (2.0, 1.0): {1.0: 0.0, 2.0: 0.0, 3.0: 0.0},
@@ -60,7 +64,9 @@ def test_initialize_q_matrix():
         (2.0, 3.0): {1.0: 0.0, 2.0: 0.0, 3.0: 0.0},
         (3.0, 3.0): {1.0: 0.0, 2.0: 0.0, 3.0: 0.0},
     }
-    q_matrix = Qlearning().initialize_q_matrix(n_agents=3, actions_space=[1.0, 2.0, 3.0])
+    q_matrix = Qlearning().initialize_q_matrix(
+        n_agents=3, actions_space=[1.0, 2.0, 3.0]
+    )
     assert q_matrix == {
         (1.0, 1.0, 1.0): {1.0: 0.0, 2.0: 0.0, 3.0: 0.0},
         (2.0, 1.0, 1.0): {1.0: 0.0, 2.0: 0.0, 3.0: 0.0},
@@ -101,7 +107,9 @@ def test_learn():
     }
 
     # no reward
-    agent = Qlearning(q_matrix=copy.deepcopy(q_matrix), discount=0.95, learning_rate=0.1)
+    agent = Qlearning(
+        q_matrix=copy.deepcopy(q_matrix), discount=0.95, learning_rate=0.1
+    )
     agent.learn(
         reward=0.0,
         state=(1.0, 1.0),
@@ -115,7 +123,9 @@ def test_learn():
     assert agent.q_matrix == q_matrix
 
     # learned nothing
-    agent = Qlearning(q_matrix=copy.deepcopy(q_matrix), discount=0.95, learning_rate=0.0)
+    agent = Qlearning(
+        q_matrix=copy.deepcopy(q_matrix), discount=0.95, learning_rate=0.0
+    )
     agent.learn(
         reward=10.0,
         state=(1.0, 1.0),

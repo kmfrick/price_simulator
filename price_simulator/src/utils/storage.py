@@ -27,15 +27,27 @@ class Storage:
 
     def observe(self, rewards: np.array, actions: np.array, quantities: np.array):
         self.counter += 1
-        self.running_rewards = self.incremental_update(rewards, self.running_rewards, self.counter)
-        self.running_quantities = self.incremental_update(quantities, self.running_quantities, self.counter)
-        self.running_actions = self.incremental_update(actions, self.running_actions, self.counter)
+        self.running_rewards = self.incremental_update(
+            rewards, self.running_rewards, self.counter
+        )
+        self.running_quantities = self.incremental_update(
+            quantities, self.running_quantities, self.counter
+        )
+        self.running_actions = self.incremental_update(
+            actions, self.running_actions, self.counter
+        )
 
         if self.counter == self.update_steps:
             if self.average_actions is not None:
-                self.average_rewards = np.vstack([self.average_rewards, self.running_rewards])
-                self.average_actions = np.vstack([self.average_actions, self.running_actions])
-                self.average_quantities = np.vstack([self.average_quantities, self.running_quantities])
+                self.average_rewards = np.vstack(
+                    [self.average_rewards, self.running_rewards]
+                )
+                self.average_actions = np.vstack(
+                    [self.average_actions, self.running_actions]
+                )
+                self.average_quantities = np.vstack(
+                    [self.average_quantities, self.running_quantities]
+                )
             else:
                 self.average_rewards = copy.deepcopy(self.running_rewards)
                 self.average_actions = copy.deepcopy(self.running_actions)
@@ -45,7 +57,9 @@ class Storage:
             self.counter = 0
 
     @staticmethod
-    def incremental_update(observation: np.array, average: np.array, cnt: int) -> np.array:
+    def incremental_update(
+        observation: np.array, average: np.array, cnt: int
+    ) -> np.array:
         return average + (observation - average) / cnt
 
     def print(self):

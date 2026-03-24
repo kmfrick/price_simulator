@@ -143,20 +143,14 @@ if __name__ == "__main__":
                 for _ in range(IR_SETTLE_PERIODS):
                     actions_tf = []
                     for a in env.agents:
-                        action_tf, _ = a._sample_action(
-                            current_state_tf, seed_step=0
-                        )
+                        action_tf, _ = a._sample_action(current_state_tf, seed_step=0)
                         actions_tf.append(action_tf)
                     current_state_tf = tf.concat(actions_tf, axis=1)
 
                 base_actions_t0_list = []
                 for a in env.agents:
-                    action_tf, _ = a._sample_action(
-                        current_state_tf, seed_step=0
-                    )
-                    base_actions_t0_list.append(
-                        float(action_tf.numpy().reshape(-1)[0])
-                    )
+                    action_tf, _ = a._sample_action(current_state_tf, seed_step=0)
+                    base_actions_t0_list.append(float(action_tf.numpy().reshape(-1)[0]))
                 base_actions_t0 = tuple(base_actions_t0_list)
                 base_prices_t0 = tuple(
                     env._denormalize_action(a) for a in base_actions_t0
@@ -184,12 +178,8 @@ if __name__ == "__main__":
                                 tf.constant([[br_action_norm]], dtype=tf.float32)
                             )
                         else:
-                            action_tf, _ = a._sample_action(
-                                state_dev_tf, seed_step=0
-                            )
-                            dev_actions.append(
-                                float(action_tf.numpy().reshape(-1)[0])
-                            )
+                            action_tf, _ = a._sample_action(state_dev_tf, seed_step=0)
+                            dev_actions.append(float(action_tf.numpy().reshape(-1)[0]))
                             dev_actions_tf.append(action_tf)
                     dev_real_prices = tuple(
                         env._denormalize_action(a) for a in dev_actions
@@ -206,12 +196,8 @@ if __name__ == "__main__":
                     base_actions = []
                     base_actions_tf = []
                     for a in env.agents:
-                        action_tf, _ = a._sample_action(
-                            state_base_tf, seed_step=0
-                        )
-                        base_actions.append(
-                            float(action_tf.numpy().reshape(-1)[0])
-                        )
+                        action_tf, _ = a._sample_action(state_base_tf, seed_step=0)
+                        base_actions.append(float(action_tf.numpy().reshape(-1)[0]))
                         base_actions_tf.append(action_tf)
                     base_real_prices = tuple(
                         env._denormalize_action(a) for a in base_actions

@@ -23,7 +23,8 @@ from typing import List, Tuple
 import os
 
 from price_simulator.src.algorithm.agents.simple import AgentStrategy
-os.environ['TF_FORCE_GPU_ALLOW_GROWTH'] = 'true'
+
+os.environ["TF_FORCE_GPU_ALLOW_GROWTH"] = "true"
 
 LOG_STD_MIN = -20.0
 LOG_STD_MAX = 2.0
@@ -56,7 +57,7 @@ class SACContinuous(AgentStrategy):
     """
     Soft Actor-Critic agent for continuous actions sampled in [-1, 1]
     """
-    
+
     ### HYPERPARAMETERS ###
     # Nb and size of hidden layers in actor network
     actor_hidden_size: int = attr.ib(default=None)
@@ -150,6 +151,7 @@ class SACContinuous(AgentStrategy):
         }
         self.replay_memory = ReplayBuffer(size=int(buffer_size), env_dict=env_dict)
         self._base_seed = tf.constant(int(self.seed), dtype=tf.int32)
+
         def make_activation(name_prefix: str):
             return Activation(activation_name, name=f"{name_prefix}_{activation_name}")
 
@@ -163,9 +165,9 @@ class SACContinuous(AgentStrategy):
                     self.actor_hidden_size,
                     activation=None,
                     name=layer_name,
-                    kernel_initializer=Orthogonal()
+                    kernel_initializer=Orthogonal(),
                 )(x)
-                #x = LayerNormalization(name=f"actor_ln{layer_idx + 1}_{uid}")(x)
+                # x = LayerNormalization(name=f"actor_ln{layer_idx + 1}_{uid}")(x)
                 x = make_activation(f"actor_act{layer_idx + 1}_{uid}")(x)
             gain = 0.1
             mu = Dense(
@@ -190,9 +192,9 @@ class SACContinuous(AgentStrategy):
                     self.critic_hidden_size,
                     activation=None,
                     name=layer_name,
-                    kernel_initializer=Orthogonal()
+                    kernel_initializer=Orthogonal(),
                 )(x)
-                #x = LayerNormalization(name=f"critic_ln{layer_idx + 1}_{uid}")(x)
+                # x = LayerNormalization(name=f"critic_ln{layer_idx + 1}_{uid}")(x)
                 x = make_activation(f"critic_act{layer_idx + 1}_{uid}")(x)
             out = Dense(
                 1,
@@ -233,13 +235,11 @@ class SACContinuous(AgentStrategy):
 
             action = tf.tanh(z)
             log_prob = -0.5 * (
-                ((z - mu) / (std + 1e-8)) ** 2
-                + 2 * log_std
-                + LOG_TWO_PI
+                ((z - mu) / (std + 1e-8)) ** 2 + 2 * log_std + LOG_TWO_PI
             )
             log_prob = tf.reduce_sum(log_prob, axis=1, keepdims=True)
             # Mathematically equivalent to log(1 - tanh(z)^2) but more stable
-            log_det_jacobian = 2 * (LOG_TWO - z - tf.math.softplus(-2. * z))
+            log_det_jacobian = 2 * (LOG_TWO - z - tf.math.softplus(-2.0 * z))
             logp = log_prob - tf.reduce_sum(log_det_jacobian, axis=1, keepdims=True)
             return action, logp
 
@@ -278,9 +278,7 @@ class SACContinuous(AgentStrategy):
         )
 
     def who_am_i(self) -> str:
-        return (
-            f"SACContinuous (actor_lr: {self.lr_actor}, " f"critic_lr: {self.lr_critic}"
-        )
+        return f"SACContinuous (actor_lr: {self.lr_actor}, critic_lr: {self.lr_critic}"
 
     def play_price(
         self,
@@ -336,7 +334,12 @@ class SACContinuous(AgentStrategy):
 
             # Average-reward target
             temperature = tf.exp(tf.stop_gradient(self.log_temperature))
-            target = rewards_tf - self.average_reward + (target_q - baseline) - temperature * next_logp
+            target = (
+                rewards_tf
+                - self.average_reward
+                + (target_q - baseline)
+                - temperature * next_logp
+            )
 
             q1 = self.critic1(
                 tf.concat([states_tf, actions_tf], axis=-1), training=True
@@ -369,13 +372,13 @@ class SACContinuous(AgentStrategy):
             z = mu_old + std_old * noise
             pi = tf.tanh(z)
             log_prob = -0.5 * (
-                ((z - mu_old) / (std_old + 1e-8)) ** 2
-                + 2 * log_std_old
-                + LOG_TWO_PI
+                ((z - mu_old) / (std_old + 1e-8)) ** 2 + 2 * log_std_old + LOG_TWO_PI
             )
             log_prob = tf.reduce_sum(log_prob, axis=1, keepdims=True)
-            log_det_jacobian = 2 * (LOG_TWO - z - tf.math.softplus(-2. * z))
-            log_det_jacobian_sum = tf.reduce_sum(log_det_jacobian, axis=1, keepdims=True)
+            log_det_jacobian = 2 * (LOG_TWO - z - tf.math.softplus(-2.0 * z))
+            log_det_jacobian_sum = tf.reduce_sum(
+                log_det_jacobian, axis=1, keepdims=True
+            )
             logp_pi = log_prob - log_det_jacobian_sum
             q1_pi = self.critic1(tf.concat([states_tf, pi], axis=-1), training=False)
             q2_pi = self.critic2(tf.concat([states_tf, pi], axis=-1), training=False)
@@ -409,9 +412,7 @@ class SACContinuous(AgentStrategy):
         log_std_new = tf.clip_by_value(log_std_new, LOG_STD_MIN, LOG_STD_MAX)
         std_new = tf.exp(log_std_new)
         log_prob_new = -0.5 * (
-            ((z - mu_new) / (std_new + 1e-8)) ** 2
-            + 2 * log_std_new
-            + LOG_TWO_PI
+            ((z - mu_new) / (std_new + 1e-8)) ** 2 + 2 * log_std_new + LOG_TWO_PI
         )
         log_prob_new = tf.reduce_sum(log_prob_new, axis=1, keepdims=True)
         logp_new = log_prob_new - log_det_jacobian_sum
@@ -422,15 +423,11 @@ class SACContinuous(AgentStrategy):
         for target_var, source_var in zip(
             self.target_critic1.variables, self.critic1.variables
         ):
-            target_var.assign(
-                self._tau * source_var + (1.0 - self._tau) * target_var
-            )
+            target_var.assign(self._tau * source_var + (1.0 - self._tau) * target_var)
         for target_var, source_var in zip(
             self.target_critic2.variables, self.critic2.variables
         ):
-            target_var.assign(
-                self._tau * source_var + (1.0 - self._tau) * target_var
-            )
+            target_var.assign(self._tau * source_var + (1.0 - self._tau) * target_var)
 
         # Average-reward baseline update (EMA of entropy-adjusted reward + TD correction)
         with tf.name_scope("avg_reward_update"):
@@ -452,10 +449,7 @@ class SACContinuous(AgentStrategy):
 
             temperature_detached = tf.exp(tf.stop_gradient(self.log_temperature))
             new_avg = tf.reduce_mean(
-                rewards_tf
-                - temperature_detached * logp_pi
-                + next_q_targ
-                - cur_q_targ
+                rewards_tf - temperature_detached * logp_pi + next_q_targ - cur_q_targ
             )
             self.average_reward.assign(
                 (1.0 - self.reward_step_size) * self.average_reward
@@ -528,9 +522,7 @@ class SACContinuous(AgentStrategy):
             step_seed = tf.cast(self.training_step, tf.int32)
         else:
             step_seed = tf.cast(seed_step, tf.int32)
-        seed = tf.stack(
-            [self._base_seed, self._base_seed + step_seed]
-        )
+        seed = tf.stack([self._base_seed, self._base_seed + step_seed])
         return self._sample_action_single_tf(state_tf, seed, deterministic)
 
     def _sample_action_batch(self, state_tf: tf.Tensor, deterministic: bool = False):
@@ -540,21 +532,15 @@ class SACContinuous(AgentStrategy):
         std = tf.exp(log_std)
 
         step_seed = tf.cast(self.training_step, tf.int32)
-        seed = tf.stack(
-            [self._base_seed, self._base_seed + step_seed]
-        )
+        seed = tf.stack([self._base_seed, self._base_seed + step_seed])
         noise = tf.random.stateless_normal(shape=tf.shape(mu), seed=seed)
         z = tf.where(deterministic, mu, mu + std * noise)
 
         action = tf.tanh(z)
         # log prob with tanh correction
-        log_prob = -0.5 * (
-            ((z - mu) / (std + 1e-8)) ** 2
-            + 2 * log_std
-            + LOG_TWO_PI
-        )
+        log_prob = -0.5 * (((z - mu) / (std + 1e-8)) ** 2 + 2 * log_std + LOG_TWO_PI)
         log_prob = tf.reduce_sum(log_prob, axis=1, keepdims=True)
-        log_det_jacobian = 2 * (LOG_TWO - z - tf.math.softplus(-2. * z))
+        log_det_jacobian = 2 * (LOG_TWO - z - tf.math.softplus(-2.0 * z))
         logp = log_prob - tf.reduce_sum(log_det_jacobian, axis=1, keepdims=True)
 
         return action, logp

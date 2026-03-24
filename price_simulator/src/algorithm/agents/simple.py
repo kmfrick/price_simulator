@@ -22,7 +22,9 @@ class AgentStrategy(metaclass=abc.ABCMeta):
     @quality.validator
     def check_quality_costs(self, attribute, value):
         if not self.marginal_cost <= value:
-            raise ValueError("Quality must be at least as high as marginal costs to be active in market")
+            raise ValueError(
+                "Quality must be at least as high as marginal costs to be active in market"
+            )
 
     @abc.abstractmethod
     def play_price(self, state, action_space, n_period, t):
@@ -104,7 +106,9 @@ class PremiumPricer(AlwaysDefectAgent):
 
     def play_price(self, state: Tuple, action_space: List, n_period: int, t: int):
         competitor_actions = state[:-1]
-        max_competitor = int(np.where(np.array(action_space) == max(competitor_actions))[0])
+        max_competitor = int(
+            np.where(np.array(action_space) == max(competitor_actions))[0]
+        )
         if max_competitor < len(action_space) - 1:
             return action_space[max_competitor + 1]
         else:
@@ -121,23 +125,27 @@ class PenetrationPricer(AlwaysDefectAgent):
 
     def play_price(self, state: Tuple, action_space: List, n_period: int, t: int):
         competitor_actions = state[:-1]
-        min_competitor = int(np.where(np.array(action_space) == min(competitor_actions))[0])
+        min_competitor = int(
+            np.where(np.array(action_space) == min(competitor_actions))[0]
+        )
         if min_competitor > 0:
             return action_space[min_competitor - 1]
         else:
             return action_space[0]
 
- 
+
 @attr.s
 class Follower(AlwaysDefectAgent):
     """
     Always plays the minimum price of last period.
     Agent must be last in list.
-    
+
     """
 
     def play_price(self, state: Tuple, action_space: List, n_period: int, t: int):
         competitor_actions = state[:-1]
-        min_competitor = int(np.where(np.array(action_space) == min(competitor_actions))[0])
-        
+        min_competitor = int(
+            np.where(np.array(action_space) == min(competitor_actions))[0]
+        )
+
         return action_space[min_competitor]

@@ -64,8 +64,7 @@ class PlotSuite:
         agent_kwargs = build_sac_kwargs()
         agent_kwargs["state_dim"] = self.n_agents
         agents = [
-            SACContinuous(**agent_kwargs, seed=idx)
-            for idx in range(self.n_agents)
+            SACContinuous(**agent_kwargs, seed=idx) for idx in range(self.n_agents)
         ]
         env = ContSynchronEnvironment(
             markup=0.1,
@@ -75,7 +74,9 @@ class PlotSuite:
         )
         return env
 
-    def _checkpoint_paths(self, checkpoint: dict) -> tuple[list[Path], list[Path], list[Path]]:
+    def _checkpoint_paths(
+        self, checkpoint: dict
+    ) -> tuple[list[Path], list[Path], list[Path]]:
         if "actor_paths" in checkpoint:
             return (
                 checkpoint["actor_paths"],
@@ -198,9 +199,7 @@ class PlotSuite:
             ref_env = self._build_env()
             # We need this for the phase diagram bc everything is in [-1, 1]
             # but we want to denormalize it
-            phase_nash_norm = (
-                2 * (np.array(nash_prices) - price_min) / price_range - 1
-            )
+            phase_nash_norm = 2 * (np.array(nash_prices) - price_min) / price_range - 1
             phase_monopoly_norm = (
                 2 * (np.array(monopoly_prices) - price_min) / price_range - 1
             )
@@ -219,11 +218,13 @@ class PlotSuite:
         else:
             print("Skipping phase diagram: requires exactly 2 agents.")
         # Read each run
-        unique_timestamps = list({
-            TIMESTAMP_RE.search(path.name).group(1)
-            for path in Path(self.artifacts_dir).glob("*.npy")
-            if TIMESTAMP_RE.search(path.name)
-        })
+        unique_timestamps = list(
+            {
+                TIMESTAMP_RE.search(path.name).group(1)
+                for path in Path(self.artifacts_dir).glob("*.npy")
+                if TIMESTAMP_RE.search(path.name)
+            }
+        )
         runs: list[SimulationRun] = []
         for ts in sorted(unique_timestamps):
             print(f"Loading run: {ts}...")
@@ -277,9 +278,15 @@ class PlotSuite:
                 loaded_metrics[field] = np.stack(arrays).T
 
             # Finds: agent1_..._final_actor.weights.h5, agent2_..._final_actor.weights.h5
-            final_actor = sorted(self.checkpoints_dir.glob(f"*_{ts}_final_actor.weights.h5"))
-            final_critic1 = sorted(self.checkpoints_dir.glob(f"*_{ts}_final_critic1.weights.h5"))
-            final_critic2 = sorted(self.checkpoints_dir.glob(f"*_{ts}_final_critic2.weights.h5"))
+            final_actor = sorted(
+                self.checkpoints_dir.glob(f"*_{ts}_final_actor.weights.h5")
+            )
+            final_critic1 = sorted(
+                self.checkpoints_dir.glob(f"*_{ts}_final_critic1.weights.h5")
+            )
+            final_critic2 = sorted(
+                self.checkpoints_dir.glob(f"*_{ts}_final_critic2.weights.h5")
+            )
 
             step_map = {}
 
@@ -293,12 +300,12 @@ class PlotSuite:
 
                 # Construct a key for the dict, e.g. "agent1_actor"
                 # Input: agent1_2025..._step90000_actor.weights.h5
-                parts = cp_file.name.split('_')
+                parts = cp_file.name.split("_")
                 # agent_id is usually parts[0] (agent1)
                 # component is usually parts[-2] (actor/critic1) before .weights.h5
                 # A safer generic way: get everything before timestamp + component type
                 agent_id = parts[0]
-                component_type = cp_file.name.split('_')[-1].replace('.weights.h5', '')
+                component_type = cp_file.name.split("_")[-1].replace(".weights.h5", "")
 
                 key_name = f"{agent_id}_{component_type}"
                 step_map[step][key_name] = cp_file
@@ -312,7 +319,7 @@ class PlotSuite:
                 final_critic1_paths=final_critic1,
                 final_critic2_paths=final_critic2,
                 checkpoints=sorted_checkpoints,
-                **loaded_metrics # Unpack the dictionary of loaded numpy arrays
+                **loaded_metrics,  # Unpack the dictionary of loaded numpy arrays
             )
             runs.append(run)
         # Plot profit gain time series
@@ -322,8 +329,8 @@ class PlotSuite:
         for run in tqdm(runs, desc=yname):
             data_raw = getattr(run, key, None)
             data = np.asarray(data_raw, dtype=np.float32)
-            data = ((data + 1.0) / 2) # Denormalize [-1, 1] -> [0, 1]
-            data = data.mean(axis=1) # Mean across agents
+            data = (data + 1.0) / 2  # Denormalize [-1, 1] -> [0, 1]
+            data = data.mean(axis=1)  # Mean across agents
             s = pd.Series(data)
             ma = s.rolling(MA_WINDOW, min_periods=1).mean()
 
@@ -332,9 +339,7 @@ class PlotSuite:
             run_dir.mkdir(parents=True, exist_ok=True)
             run_df = run_df.dropna(subset=[yname])
             plt.figure()
-            ax = sns.lineplot(
-                data=run_df, x="Time", y=yname, estimator=None
-            )
+            ax = sns.lineplot(data=run_df, x="Time", y=yname, estimator=None)
             plt.savefig(run_dir / f"{key}.png")
             plt.close()
 
@@ -357,7 +362,7 @@ class PlotSuite:
         gains: list[float] = []
         for run in runs:
             profits_arr = np.asarray(run.profits, dtype=np.float32)
-            profits_arr = (profits_arr + 1.0) / 2 # Denormalize [-1, 1] -> [0, 1]
+            profits_arr = (profits_arr + 1.0) / 2  # Denormalize [-1, 1] -> [0, 1]
             idx_prof = max(0, len(profits_arr) - 1)
             start_idx_prof = max(0, idx_prof - MA_WINDOW)
             relevant = profits_arr[start_idx_prof : idx_prof + 1]
@@ -447,15 +452,11 @@ class PlotSuite:
                         actions_tf = []
                         for a in env.agents:
                             action_tf, _ = a._sample_action(
-                                current_state_tf,
-                                deterministic=True,
-                                seed_step=None
+                                current_state_tf, deterministic=True, seed_step=None
                             )
                             actions.append(float(action_tf.numpy().reshape(-1)[0]))
                             actions_tf.append(action_tf)
-                        real_prices = tuple(
-                            env._denormalize_action(a) for a in actions
-                        )
+                        real_prices = tuple(env._denormalize_action(a) for a in actions)
                         pre_prices.append(real_prices)
                         current_state_tf = tf.concat(actions_tf, axis=1)
                     # Non-deviation profit
@@ -467,13 +468,9 @@ class PlotSuite:
                         base_actions_tf = []
                         for a in env.agents:
                             action_tf, _ = a._sample_action(
-                                state_base_tf,
-                                deterministic=True,
-                                seed_step=None
+                                state_base_tf, deterministic=True, seed_step=None
                             )
-                            base_actions.append(
-                                float(action_tf.numpy().reshape(-1)[0])
-                            )
+                            base_actions.append(float(action_tf.numpy().reshape(-1)[0]))
                             base_actions_tf.append(action_tf)
                         base_real_prices = tuple(
                             env._denormalize_action(a) for a in base_actions
@@ -516,9 +513,7 @@ class PlotSuite:
                                 )
                             else:
                                 action_tf, _ = a._sample_action(
-                                    state_dev_tf,
-                                    deterministic=True,
-                                    seed_step=None
+                                    state_dev_tf, deterministic=True, seed_step=None
                                 )
                                 dev_actions.append(
                                     float(action_tf.numpy().reshape(-1)[0])
@@ -659,9 +654,7 @@ class PlotSuite:
                 ax.set_ylabel("Deviation from Steady-State Price")
                 ax.legend()
                 fig.tight_layout()
-                fig.savefig(
-                    out_path / f"ir_{r['run_id']}_def{def_idx}.png"
-                )
+                fig.savefig(out_path / f"ir_{r['run_id']}_def{def_idx}.png")
                 plt.close(fig)
 
             xs_agg = np.arange(-common_pre_len, common_dev_len)

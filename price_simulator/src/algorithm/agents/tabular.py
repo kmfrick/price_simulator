@@ -32,8 +32,14 @@ class Qlearning(AgentStrategy):
             raise ValueError("Learning rate must lie in [0,1)")
 
     def who_am_i(self) -> str:
-        return type(self).__name__ + " (gamma: {}, alpha: {}, policy: {}, quality: {}, mc: {})".format(
-            self.discount, self.learning_rate, self.decision.who_am_i(), self.quality, self.marginal_cost
+        return type(
+            self
+        ).__name__ + " (gamma: {}, alpha: {}, policy: {}, quality: {}, mc: {})".format(
+            self.discount,
+            self.learning_rate,
+            self.decision.who_am_i(),
+            self.quality,
+            self.marginal_cost,
         )
 
     def play_price(self, state: Tuple, action_space: List, n_period: int, t: int):
@@ -57,8 +63,12 @@ class Qlearning(AgentStrategy):
         next_state: Tuple,
     ):
         state_action_value = copy.deepcopy(self.q_matrix[state][action])
-        future_next_state_action_value = self.q_matrix[next_state][self.get_optimal_action(self.q_matrix, next_state)]
-        self.q_matrix[state][action] = (1 - self.learning_rate) * state_action_value + self.learning_rate * (
+        future_next_state_action_value = self.q_matrix[next_state][
+            self.get_optimal_action(self.q_matrix, next_state)
+        ]
+        self.q_matrix[state][action] = (
+            1 - self.learning_rate
+        ) * state_action_value + self.learning_rate * (
             reward + self.discount * future_next_state_action_value
         )
 
@@ -70,7 +80,9 @@ class Qlearning(AgentStrategy):
         choose randomly.
         """
         optimal_actions = [
-            action for action, value in q_matrix[state].items() if value == max(q_matrix[state].values())
+            action
+            for action, value in q_matrix[state].items()
+            if value == max(q_matrix[state].values())
         ]
         return random.choice(optimal_actions)
 
@@ -111,8 +123,12 @@ class SARSA(Qlearning):
         state: Tuple,
         next_state: Tuple,
     ):
-        previous_state_action_value = copy.deepcopy(self.q_matrix[previous_state][previous_action])
+        previous_state_action_value = copy.deepcopy(
+            self.q_matrix[previous_state][previous_action]
+        )
         state_action_value = copy.deepcopy(self.q_matrix[state][action])
         self.q_matrix[previous_state][previous_action] = (
             1 - self.learning_rate
-        ) * previous_state_action_value + self.learning_rate * (previous_reward + self.discount * state_action_value)
+        ) * previous_state_action_value + self.learning_rate * (
+            previous_reward + self.discount * state_action_value
+        )

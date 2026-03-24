@@ -36,6 +36,15 @@ def test_observe():
     assert storage.average_actions.shape == (desired_length, n_agents)
     assert storage.average_quantities.shape == (desired_length, n_agents)
 
-    assert np.all(storage.average_rewards == np.repeat(np.array([[10, 20]]), repeats=desired_length, axis=0))
-    assert np.all(storage.average_actions == np.repeat(np.array([[30, 40]]), repeats=desired_length, axis=0))
-    assert np.all(storage.average_quantities == np.repeat(np.array([[50, 0]]), repeats=desired_length, axis=0))
+    assert np.all(
+        storage.average_rewards
+        == np.repeat(np.array([[10, 20]]), repeats=desired_length, axis=0)
+    )
+    assert np.all(
+        storage.average_actions
+        == np.repeat(np.array([[30, 40]]), repeats=desired_length, axis=0)
+    )
+    assert np.all(
+        storage.average_quantities
+        == np.repeat(np.array([[50, 0]]), repeats=desired_length, axis=0)
+    )

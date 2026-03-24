@@ -6,13 +6,18 @@ def test_logit_demand():
         q > 0.0 for q in LogitDemand().get_quantities((0.1, 0.3, 10.4), (0.5, 0.5, 0.5))
     ), "Negative quantities in logit demand"
     assert (
-        LogitDemand().get_quantities((1, 2), (3, 2))[0] > LogitDemand().get_quantities((1, 2), (3, 2))[1]
-    ), "First product should be bought more often than the second (is cheaper and better quality)"
+        LogitDemand().get_quantities((1, 2), (3, 2))[0]
+        > LogitDemand().get_quantities((1, 2), (3, 2))[1]
+    ), (
+        "First product should be bought more often than the second (is cheaper and better quality)"
+    )
     assert (
-        LogitDemand().get_quantities((1, 1), (3, 2))[0] > LogitDemand().get_quantities((1, 1), (3, 2))[1]
+        LogitDemand().get_quantities((1, 1), (3, 2))[0]
+        > LogitDemand().get_quantities((1, 1), (3, 2))[1]
     ), "First product should be bought more often than the second (better quality)"
     assert (
-        LogitDemand().get_quantities((1, 2), (1, 1))[0] > LogitDemand().get_quantities((1, 2), (1, 1))[1]
+        LogitDemand().get_quantities((1, 2), (1, 1))[0]
+        > LogitDemand().get_quantities((1, 2), (1, 1))[1]
     ), "First product should be bought more often than the second (cheaper)"
 
 

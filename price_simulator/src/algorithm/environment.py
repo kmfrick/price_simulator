@@ -30,9 +30,9 @@ class EnvironmentStrategy(metaclass=abc.ABCMeta):
         """Compute Nash Price and Monopoly price after initialization."""
         if len(self.agents) > 0.0:
             if isinstance(self.demand, PrisonersDilemmaDemand):
-                assert (
-                    len(self.possible_prices) > 0.0
-                ), "Priosoners Dilemma needs two possible prices"
+                assert len(self.possible_prices) > 0.0, (
+                    "Priosoners Dilemma needs two possible prices"
+                )
                 self.monopoly_prices = [
                     max(self.possible_prices),
                     max(self.possible_prices),
@@ -111,7 +111,6 @@ class DiscreteSynchronEnvironment(EnvironmentStrategy):
         previous_rewards = np.multiply(np.subtract(state, marginal_costs), quantities)
 
         for t in range(self.n_periods):
-
             # agents decide about there prices (hereafter is the state different)
             next_state = tuple(
                 agent.play_price(state, self.possible_prices, self.n_periods, t)
@@ -199,7 +198,6 @@ class ReformulationEnvironment(DiscreteSynchronEnvironment):
         )
 
         for t in range(self.n_periods):
-
             # agents decide about there prices (hereafter is the state different)
             actions = tuple(
                 agent.play_price(state, self.possible_prices, self.n_periods, t)
@@ -364,12 +362,12 @@ class ContSynchronEnvironment(EnvironmentStrategy):
                         agent.play_price(state, self.n_periods, t)
                         for agent in self.agents
                     )  # normalized
-                assert (
-                    np.array(actions) >= -1.0
-                ).all(), f"Actions have to be > -1, got {actions}"
-                assert (
-                    np.array(actions) <= 1.0
-                ).all(), f"Actions have to be  < 1, got {actions}"
+                assert (np.array(actions) >= -1.0).all(), (
+                    f"Actions have to be > -1, got {actions}"
+                )
+                assert (np.array(actions) <= 1.0).all(), (
+                    f"Actions have to be  < 1, got {actions}"
+                )
 
                 # demand is estimated for prices
                 prices = tuple(
@@ -379,9 +377,9 @@ class ContSynchronEnvironment(EnvironmentStrategy):
                 quantities = self.demand.get_quantities(
                     prices, qualities
                 )  # UNNORMALIZED
-                assert (
-                    np.array(quantities) >= 0.0
-                ).all(), "Quantities cannot be negative"
+                assert (np.array(quantities) >= 0.0).all(), (
+                    "Quantities cannot be negative"
+                )
                 profits = np.multiply(
                     np.subtract(prices, marginal_costs), quantities
                 )  # UNNORMALIZED

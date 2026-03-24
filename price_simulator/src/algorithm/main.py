@@ -13,7 +13,6 @@ from price_simulator.src.algorithm.agents.sac import build_sac_kwargs
 import tensorflow as tf
 
 
-
 def checkpoint_networks(
     environment: ContSynchronEnvironment,
     checkpoint_dir: Path,
@@ -29,9 +28,13 @@ def checkpoint_networks(
         actor = getattr(agent, "actor", None)
         critic1 = getattr(agent, "critic1", None)
         critic2 = getattr(agent, "critic2", None)
-        actor_path = (checkpoint_dir / f"agent{idx}_{ts}{suffix_str}_actor.weights.h5")
-        critic1_path = checkpoint_dir / f"agent{idx}_{ts}{suffix_str}_critic1.weights.h5"
-        critic2_path = checkpoint_dir / f"agent{idx}_{ts}{suffix_str}_critic2.weights.h5"
+        actor_path = checkpoint_dir / f"agent{idx}_{ts}{suffix_str}_actor.weights.h5"
+        critic1_path = (
+            checkpoint_dir / f"agent{idx}_{ts}{suffix_str}_critic1.weights.h5"
+        )
+        critic2_path = (
+            checkpoint_dir / f"agent{idx}_{ts}{suffix_str}_critic2.weights.h5"
+        )
         actor.save_weights(actor_path)
         critic1.save_weights(critic1_path)
         critic2.save_weights(critic2_path)
@@ -47,7 +50,6 @@ def run(total_periods: int = 50_000):
     timestamp = dt_now.strftime("%Y%m%d-%H%M%S")
     base_seed = int(dt_now.timestamp())
     tf.random.set_seed(base_seed)
-
 
     if total_periods <= 0:
         raise ValueError("total_periods must be a positive integer.")
@@ -93,7 +95,7 @@ def run(total_periods: int = 50_000):
 
     env.play_game(checkpoint_callback=periodic_checkpoint, learn_start=512)
 
-    # Persist training histories for each agent 
+    # Persist training histories for each agent
     saved_agents: List[Tuple[int, dict]] = []
 
     prices_history = np.asarray(env.price_history)
@@ -133,9 +135,7 @@ def run(total_periods: int = 50_000):
 
         if paths:
             saved_agents.append((idx, paths))
-    checkpoint_networks(
-        env, checkpoint_dir, suffix="final", timestamp=timestamp
-    )
+    checkpoint_networks(env, checkpoint_dir, suffix="final", timestamp=timestamp)
     print("Simulation done.")
 
 
