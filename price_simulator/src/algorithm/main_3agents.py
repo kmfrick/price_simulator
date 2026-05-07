@@ -47,7 +47,7 @@ def checkpoint_networks(
     return checkpoint_paths
 
 
-def run(total_periods: int = 50_000):
+def run(total_periods: int = 100_000):
     dt_now = datetime.now()
     timestamp = dt_now.strftime("%Y%m%d-%H%M%S")
     base_seed = int(dt_now.timestamp())
@@ -55,22 +55,21 @@ def run(total_periods: int = 50_000):
 
     if total_periods <= 0:
         raise ValueError("total_periods must be a positive integer.")
-    agent_seeds = [base_seed + agent_id for agent_id in range(2)]
+    n_agents = 3
+    agent_seeds = [base_seed + agent_id for agent_id in range(n_agents)]
     if len(set(agent_seeds)) != len(agent_seeds):
         raise ValueError("Agent seeds must be unique for each SAC agent.")
 
     sac_kwargs = build_sac_kwargs()
+    sac_kwargs["state_dim"] = n_agents
     env = ContSynchronEnvironment(
         markup=0.1,
         n_periods=total_periods,
         possible_prices=[],
         demand=LogitDemand(outside_quality=0.0, price_sensitivity=0.25),
-        agents=[
-            SACContinuous(seed=agent_seeds[0], **sac_kwargs),
-            SACContinuous(seed=agent_seeds[1], **sac_kwargs),
-        ],
+        agents=[SACContinuous(seed=seed, **sac_kwargs) for seed in agent_seeds],
     )
-    artifacts_dir = Path.cwd() / "artifacts"
+    artifacts_dir = Path.cwd() / "artifacts_3ag"
     checkpoint_dir = artifacts_dir / "checkpoints"
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
 

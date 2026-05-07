@@ -1,13 +1,14 @@
 import random
-from typing import List, Tuple
+from typing import TYPE_CHECKING, List, Tuple
 
 import attr
-
-import keras
 import numpy as np
 from keras.layers import Dense
-from keras.models import Sequential
+from keras.models import Model, Sequential
 from keras.optimizers import Adam
+
+if TYPE_CHECKING:
+    import keras
 from price_simulator.src.algorithm.agents.buffer import ReplayBuffer
 from price_simulator.src.algorithm.agents.simple import AgentStrategy
 from price_simulator.src.algorithm.policies import EpsilonGreedy, ExplorationStrategy
@@ -18,8 +19,8 @@ class DQN(AgentStrategy):
     """Deep-Q-Netowrks Agent with discounted reward formulation"""
 
     # Q-Network
-    qnetwork_target: keras.models = attr.ib(default=None)
-    qnetwork_local: keras.models = attr.ib(default=None)
+    qnetwork_target: Model | None = attr.ib(default=None)
+    qnetwork_local: Model | None = attr.ib(default=None)
     update_target_after: int = attr.ib(default=100)
     replay_memory: ReplayBuffer = attr.ib(factory=ReplayBuffer)
     batch_size: int = attr.ib(default=32)
@@ -28,21 +29,12 @@ class DQN(AgentStrategy):
 
     # General
     decision: ExplorationStrategy = attr.ib(factory=EpsilonGreedy)
-    discount: float = attr.ib(default=0.95)
-    learning_rate: float = attr.ib(default=0.1)
-
-    @discount.validator
-    def check_discount(self, attribute, value):
-        if not 0 <= value <= 1:
-            raise ValueError("Discount factor must lie in [0,1]")
-
-    @learning_rate.validator
-    def check_learning_rate(self, attribute, value):
-        """For learning_rate = 0, the algorithm does not learn at all.
-        For learning_rate = 1, it immediately forgets what it has learned in the past.
-        """
-        if not 0 <= value < 1:
-            raise ValueError("Learning rate must lie in [0,1)")
+    discount: float = attr.ib(default=0.95, validator=lambda self, attr, value: (
+        ValueError("Discount factor must lie in [0,1]") if not 0 <= value <= 1 else None
+    ))
+    learning_rate: float = attr.ib(default=0.1, validator=lambda self, attr, value: (
+        ValueError("Learning rate must lie in [0,1)") if not 0 <= value < 1 else None
+    ))
 
     def who_am_i(self) -> str:
         # TODO better who am i
@@ -57,16 +49,17 @@ class DQN(AgentStrategy):
         )
 
     def play_price(
-        self, state: Tuple[float], action_space: List[float], n_period: int, t: int
+        self, state: Tuple[float, ...], action_space: List[float], n_period: int, t: int
     ) -> float:
         """Returns an action by either following greedy policy or experimentation."""
 
         # init q networks if necessary
-        if not self.qnetwork_target or not self.qnetwork_local:
+        if self.qnetwork_target is None or self.qnetwork_local is None:
             self.qnetwork_target = self.initialize_network(
                 len(state), len(action_space)
             )
             self.qnetwork_local = self.initialize_network(len(state), len(action_space))
+            assert self.qnetwork_target is not None and self.qnetwork_local is not None
             self.qnetwork_target.set_weights(self.qnetwork_local.get_weights())
 
         # play action
@@ -96,16 +89,19 @@ class DQN(AgentStrategy):
         next_state: Tuple,
     ):
         # store experience in buffer (action is converted to index)
-        action = np.where(action_space == action)[0]
-        state = self.scale(state, action_space)
-        next_state = self.scale(next_state, action_space)
-        self.replay_memory.add(state, action, reward, next_state)
+        action_idx = int(np.where(action_space == action)[0][0])
+        scaled_state = self.scale(state, action_space)
+        scaled_next_state = self.scale(next_state, action_space)
+        self.replay_memory.add(scaled_state, action_idx, reward, scaled_next_state)
 
         if len(self.replay_memory) > self.batch_size:
             # get training sample
             states, actions, rewards, next_states = self.replay_memory.sample(
                 self.batch_size
             )
+
+            # Type guard: networks must be initialized after first play_price call
+            assert self.qnetwork_target is not None and self.qnetwork_local is not None
 
             # Get max predicted Q values (for next states) from target model
             next_optimal_q = np.amax(
@@ -144,7 +140,7 @@ class DQN(AgentStrategy):
         return model
 
     @staticmethod
-    def scale(inputs: Tuple, action_space: List) -> np.array:
+    def scale(inputs: Tuple, action_space: List) -> np.ndarray:
         """Scale float input to range from 0 to 1."""
         max_action = max(action_space)
         min_action = min(action_space)
@@ -184,16 +180,19 @@ class DiffDQN(DQN):
         next_state: Tuple,
     ):
         # store experience in buffer (action is converted to index)
-        action = np.where(action_space == action)[0]
-        state = self.scale(state, action_space)
-        next_state = self.scale(next_state, action_space)
-        self.replay_memory.add(state, action, reward, next_state)
+        action_idx = int(np.where(action_space == action)[0][0])
+        scaled_state = self.scale(state, action_space)
+        scaled_next_state = self.scale(next_state, action_space)
+        self.replay_memory.add(scaled_state, action_idx, reward, scaled_next_state)
 
         if len(self.replay_memory) > self.batch_size:
             # get training sample
             states, actions, rewards, next_states = self.replay_memory.sample(
                 self.batch_size
             )
+
+            # Type guard: networks must be initialized after first play_price call
+            assert self.qnetwork_target is not None and self.qnetwork_local is not None
 
             # Get max predicted Q values (for next states) from target model
             next_optimal_q = np.amax(
@@ -219,8 +218,8 @@ class DiffDQN(DQN):
             self.average_reward = self.average_reward + self.reward_step_size * (
                 reward
                 - self.average_reward  # noqa W503
-                + np.amax(self.qnetwork_target.predict(np.array([next_state])))  # noqa W503
-                - float(self.qnetwork_target.predict(np.array([state]))[0, action])  # noqa W503
+                + np.amax(self.qnetwork_target.predict(np.array([scaled_next_state])))  # noqa W503
+                - float(self.qnetwork_target.predict(np.array([scaled_state]))[0, action_idx])  # noqa W503
             )
 
             # update target_qnetwork after some periods
@@ -260,16 +259,19 @@ class DDQN(DiffDQN):
         next_state: Tuple,
     ):
         # store experience in buffer (action is converted to index)
-        action = np.where(action_space == action)[0]
-        state = self.scale(state, action_space)
-        next_state = self.scale(next_state, action_space)
-        self.replay_memory.add(state, action, reward, next_state)
+        action_idx = int(np.where(action_space == action)[0][0])
+        scaled_state = self.scale(state, action_space)
+        scaled_next_state = self.scale(next_state, action_space)
+        self.replay_memory.add(scaled_state, action_idx, reward, scaled_next_state)
 
         if len(self.replay_memory) > self.batch_size:
             # get training sample
             states, actions, rewards, next_states = self.replay_memory.sample(
                 self.batch_size
             )
+
+            # Type guard: networks must be initialized after first play_price call
+            assert self.qnetwork_target is not None and self.qnetwork_local is not None
 
             # Get max predicted Q values (for next states) from target model
 
@@ -301,8 +303,8 @@ class DDQN(DiffDQN):
             self.average_reward = self.average_reward + self.reward_step_size * (
                 reward
                 - self.average_reward  # noqa W503
-                + np.amax(self.qnetwork_target.predict(np.array([next_state])))  # noqa W503
-                - float(self.qnetwork_target.predict(np.array([state]))[0, action])  # noqa W503
+                + np.amax(self.qnetwork_target.predict(np.array([scaled_next_state])))  # noqa W503
+                - float(self.qnetwork_target.predict(np.array([scaled_state]))[0, action_idx])  # noqa W503
             )
 
             # update target_qnetwork after some periods

@@ -4,17 +4,17 @@ import numpy as np
 from tabulate import tabulate
 
 
-def prepare_profit_calculation(environment) -> Tuple[np.array, np.array]:
+def prepare_profit_calculation(environment) -> Tuple[np.ndarray, np.ndarray]:
     qualities = tuple(agent.quality for agent in environment.agents)
     marginal_costs = tuple(agent.marginal_cost for agent in environment.agents)
     nash_quantities = environment.demand.get_quantities(
-        environment.nash_prices, qualities
+        tuple(environment.nash_prices), qualities
     )
     nash_profits = np.multiply(
         np.subtract(environment.nash_prices, marginal_costs), nash_quantities
     )
     monopoly_quantities = environment.demand.get_quantities(
-        environment.monopoly_prices, qualities
+        tuple(environment.monopoly_prices), qualities
     )
     monopoly_profits = np.multiply(
         np.subtract(environment.monopoly_prices, marginal_costs), monopoly_quantities
@@ -23,8 +23,8 @@ def prepare_profit_calculation(environment) -> Tuple[np.array, np.array]:
 
 
 def get_collusion_for(
-    averages: np.array, nash_values: np.array, monopoly_values: np.array
-) -> np.array:
+    averages: np.ndarray, nash_values: np.ndarray, monopoly_values: np.ndarray
+) -> np.ndarray:
     return np.divide(
         np.subtract(averages, nash_values), np.subtract(monopoly_values, nash_values)
     )

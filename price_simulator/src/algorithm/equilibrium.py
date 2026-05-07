@@ -14,7 +14,7 @@ class EquilibriumCalculator(object):
 
     demand: MarketDemandStrategy = attr.ib()
 
-    def get_nash_equilibrium(self, qualities: List, marginal_costs: List) -> np.array:
+    def get_nash_equilibrium(self, qualities: List, marginal_costs: List) -> np.ndarray:
         """Calculate prices that makes market outcome an equilibrium"""
         param = (qualities, marginal_costs)
         p0 = np.array(marginal_costs)
@@ -23,22 +23,22 @@ class EquilibriumCalculator(object):
     def profit(
         self,
         own_price: float,
-        prices: np.array,
-        qualities: np.array,
-        marginal_costs: np.array,
+        prices: np.ndarray,
+        qualities: np.ndarray,
+        marginal_costs: np.ndarray,
         i: int,
     ) -> float:
         """Calculate profit for ith firm if it sets his price to own_price given competitor prices."""
         temp_prices = copy.deepcopy(prices)
-        temp_prices[i] = own_price.item()
+        temp_prices[i] = own_price
         return (
             -1
             * (temp_prices[i] - marginal_costs[i])
-            * self.demand.get_quantities(temp_prices, qualities)[i]
+            * self.demand.get_quantities(tuple(temp_prices), tuple(qualities))[i]
         )
 
     def reaction_function(
-        self, prices: np.array, qualities: np.array, marginal_costs: np.array, i: float
+        self, prices: np.ndarray, qualities: np.ndarray, marginal_costs: np.ndarray, i: int
     ) -> float:
         """Get price (optimal reaction) that maximizes own profit for given competitor prices."""
         return minimize(
@@ -50,8 +50,8 @@ class EquilibriumCalculator(object):
         ).x[0]
 
     def vector_reaction(
-        self, nash_prices: np.array, qualities: np.array, marginal_costs: np.array
-    ) -> np.array:
+        self, nash_prices: np.ndarray, qualities: np.ndarray, marginal_costs: np.ndarray
+    ) -> np.ndarray:
         """Vector representation of the fix-point for Nash prices."""
         return np.array(nash_prices) - np.array(
             [
@@ -60,7 +60,7 @@ class EquilibriumCalculator(object):
             ]
         )
 
-    def get_monopoly_outcome(self, qualities: List, marginal_costs: List) -> np.array:
+    def get_monopoly_outcome(self, qualities: List, marginal_costs: List) -> np.ndarray:
         """Get prices that maximize joint profit."""
         return minimize(
             fun=self.joint_profit,
@@ -71,12 +71,12 @@ class EquilibriumCalculator(object):
         ).x
 
     def joint_profit(
-        self, prices: np.array, qualities: np.array, marginal_costs: np.array
+        self, prices: np.ndarray, qualities: np.ndarray, marginal_costs: np.ndarray
     ) -> float:
         """Return (negative) joint profit for prices."""
         return -1 * np.sum(
             np.multiply(
                 np.subtract(prices, marginal_costs),
-                self.demand.get_quantities(prices, qualities),
+                self.demand.get_quantities(tuple(prices), tuple(qualities)),
             )
         )

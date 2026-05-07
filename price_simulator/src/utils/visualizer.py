@@ -112,11 +112,11 @@ class PlotSuite:
         self, actor_paths: list[Path]
     ) -> ContSynchronEnvironment:
         env = self._build_env()
-        zero_state = [0.0] * self.n_agents
+        zero_state: tuple[float, ...] = tuple([0.0] * self.n_agents)
         for agent_idx, agent in enumerate(env.agents):
             if hasattr(agent, "decision"):
                 agent.decision = EpsilonGreedy(eps=0.0)
-            agent.play_price(zero_state, 1, 0, use_target=False)
+            agent.play_price(zero_state, [], 1, 0)
             agent.actor.load_weights(actor_paths[agent_idx])
         return env
 
@@ -395,10 +395,10 @@ class PlotSuite:
                     end = min(total, start + chunk_size)
                     s0 = tf.convert_to_tensor(states[start:end], dtype=tf.float32)
                     s1 = tf.convert_to_tensor(states[start:end], dtype=tf.float32)
-                    actions0, _ = env.agents[0]._sample_action_batch(
+                    actions0, _ = env.agents[0]._sample_action_batch(  # type: ignore[attr-defined]
                         s0, deterministic=True
                     )
-                    actions1, _ = env.agents[1]._sample_action_batch(
+                    actions1, _ = env.agents[1]._sample_action_batch(  # type: ignore[attr-defined]
                         s1, deterministic=True
                     )
                     mapping_flat[start:end, 0] = actions0.numpy().reshape(-1)
@@ -451,7 +451,7 @@ class PlotSuite:
                         actions = []
                         actions_tf = []
                         for a in env.agents:
-                            action_tf, _ = a._sample_action(
+                            action_tf, _ = a._sample_action(  # type: ignore[attr-defined]
                                 current_state_tf, deterministic=True, seed_step=None
                             )
                             actions.append(float(action_tf.numpy().reshape(-1)[0]))

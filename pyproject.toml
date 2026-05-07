@@ -1,0 +1,18 @@
+[project]
+name = "algorithmic-pricing-dqn"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "attrs>=26.1.0",
+    "keras>=3.13.2",
+    "matplotlib>=3.10.8",
+    "numpy>=2.4.3",
+    "pandas>=3.0.1",
+    "pytest>=9.0.2",
+    "scipy>=1.17.1",
+    "seaborn>=0.13.2",
+    "tqdm>=4.67.3",
+    "ty>=0.0.24",
+]

@@ -27,7 +27,7 @@ def test_play_optimal_action():
     agent = DQN(
         decision=EpsilonGreedy(eps=0.0), replay_memory=ReplayBuffer(50), batch_size=1
     )
-    state = tuple(random.choices(possible_prices, k=2))
+    state: tuple[int | float, ...] = tuple(random.choices(possible_prices, k=2))
     agent.play_price(state, possible_prices, 0, 0)
     for _ in range(10):
         agent.learn(
@@ -60,6 +60,7 @@ def test_delayed_learning():
     )
     state = tuple(random.choices(possible_prices, k=2))
     agent.play_price(state, possible_prices, 0, 0)
+    assert agent.qnetwork_local is not None
     weights_before_learning = copy.deepcopy(agent.qnetwork_local.get_weights())
     agent.learn(
         previous_reward=1.0,
@@ -102,8 +103,9 @@ def test_update_network():
         batch_size=1,
         update_target_after=10,
     )
-    state = tuple(random.choices(possible_prices, k=2))
+    state: tuple[int | float, ...] = tuple(random.choices(possible_prices, k=2))
     agent.play_price(state, possible_prices, 0, 0)
+    assert agent.qnetwork_local is not None and agent.qnetwork_target is not None
     assert np.isclose(
         np.array(agent.qnetwork_local.get_weights()[0]),
         np.array(agent.qnetwork_target.get_weights()[0]),
@@ -193,8 +195,9 @@ def test_delayed_learning_diff():
     agent = DiffDQN(
         decision=EpsilonGreedy(eps=0.0), replay_memory=ReplayBuffer(50), batch_size=1
     )
-    state = tuple(random.choices(possible_prices, k=2))
+    state: tuple[int | float, ...] = tuple(random.choices(possible_prices, k=2))
     agent.play_price(state, possible_prices, 0, 0)
+    assert agent.qnetwork_local is not None
     weights_before_learning = copy.deepcopy(agent.qnetwork_local.get_weights())
     agent.learn(
         previous_reward=1.0,
@@ -237,8 +240,9 @@ def test_update_network_diff():
         batch_size=1,
         update_target_after=10,
     )
-    state = tuple(random.choices(possible_prices, k=2))
+    state: tuple[int | float, ...] = tuple(random.choices(possible_prices, k=2))
     agent.play_price(state, possible_prices, 0, 0)
+    assert agent.qnetwork_local is not None and agent.qnetwork_target is not None
     assert np.isclose(
         np.array(agent.qnetwork_local.get_weights()[4]),
         np.array(agent.qnetwork_target.get_weights()[4]),
@@ -283,11 +287,12 @@ def test_random_action_selection():
     agent = DiffDQN(
         decision=EpsilonGreedy(eps=0.0), replay_memory=ReplayBuffer(2), batch_size=1
     )
-    state = tuple(random.choices(possible_prices, k=2))
+    state: tuple[int | float, ...] = tuple(random.choices(possible_prices, k=2))
     agent.play_price(state, possible_prices, 0, 0)
 
     # same action values (all weights are zreo)
     agent.play_price(state, possible_prices, 0, 0)
+    assert agent.qnetwork_local is not None
     weights = agent.qnetwork_local.get_weights()
     for w in weights:
         w[w != 0.0] = 0.0
@@ -321,8 +326,9 @@ def test_ddqn():
     agent = DDQN(
         decision=EpsilonGreedy(eps=0.0), replay_memory=ReplayBuffer(50), batch_size=2
     )
-    state = tuple(random.choices(possible_prices, k=2))
+    state: tuple[int | float, ...] = tuple(random.choices(possible_prices, k=2))
     agent.play_price(state, possible_prices, 0, 0)
+    assert agent.qnetwork_local is not None
     weights_before_learning = copy.deepcopy(agent.qnetwork_local.get_weights())
     agent.learn(
         previous_reward=1.0,

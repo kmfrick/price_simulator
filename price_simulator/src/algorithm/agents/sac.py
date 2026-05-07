@@ -282,12 +282,16 @@ class SACContinuous(AgentStrategy):
 
     def play_price(
         self,
-        state: Tuple[float],
+        state: Tuple[float, ...],
+        action_space: List,
         n_period: int,
         t: int,
-        use_target: bool = None,
+        use_target: bool | None = None,
     ) -> float:
-        """Sample a price from the stochastic policy."""
+        """Sample a price from the stochastic policy.
+
+        Note: action_space is ignored for SAC agents as they operate on continuous actions.
+        """
 
         state_tensor = tf.convert_to_tensor([state], dtype=tf.float32)
         # Use the environment timestep for the stateless RNG seed so action sampling
@@ -472,9 +476,10 @@ class SACContinuous(AgentStrategy):
         reward: float,
         previous_action: float,
         action: float,
-        previous_state: Tuple[float],
-        state: Tuple[float],
-        next_state: Tuple[float],
+        action_space: List,
+        previous_state: Tuple[float, ...],
+        state: Tuple[float, ...],
+        next_state: Tuple[float, ...],
     ):
         """Learn from experience using compiled training step."""
         # Store experience

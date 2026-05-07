@@ -25,7 +25,7 @@ class Storage:
         self.running_quantities = np.array([0] * n_agents)
         self.running_actions = np.array([0] * n_agents)
 
-    def observe(self, rewards: np.array, actions: np.array, quantities: np.array):
+    def observe(self, rewards: np.ndarray, actions: np.ndarray, quantities: np.ndarray):
         self.counter += 1
         self.running_rewards = self.incremental_update(
             rewards, self.running_rewards, self.counter
@@ -58,8 +58,8 @@ class Storage:
 
     @staticmethod
     def incremental_update(
-        observation: np.array, average: np.array, cnt: int
-    ) -> np.array:
+        observation: np.ndarray, average: np.ndarray, cnt: int
+    ) -> np.ndarray:
         return average + (observation - average) / cnt
 
     def print(self):

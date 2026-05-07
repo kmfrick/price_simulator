@@ -35,13 +35,13 @@ class PrisonersDilemmaDemand(MarketDemandStrategy):
 class LogitDemand(MarketDemandStrategy):
     """Market demand modulation for logit demand"""
 
-    price_sensitivity: float = attr.ib(0.25)  # lower more sensitive
-    outside_quality: float = attr.ib(0.0)
-
-    @price_sensitivity.validator
-    def check_price_sensitivity(self, attribute, value):
-        if not 0.005 <= value:
-            raise ValueError("Price Sensitivity must lie above 0.005")
+    price_sensitivity: float = attr.ib(
+        default=0.25,
+        validator=lambda self, attr, value: (
+            ValueError("Price Sensitivity must lie above 0.005") if not 0.005 <= value else None
+        ),
+    )  # lower more sensitive
+    outside_quality: float = attr.ib(default=0.0)
 
     def get_quantities(self, prices: Tuple, qualities: Tuple) -> Tuple:
         denominator = sum(

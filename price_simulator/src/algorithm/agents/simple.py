@@ -11,23 +11,25 @@ import numpy as np
 class AgentStrategy(metaclass=abc.ABCMeta):
     """Top-level interface for Price setting agents"""
 
-    marginal_cost: float = attr.ib(default=1.0)
-    quality: float = attr.ib(default=2.0)
+    marginal_cost: float = attr.ib(
+        default=1.0,
+        validator=lambda self, attr, value: (
+            ValueError("Marginal costs must be positive") if value < 0.0 else None
+        ),
+    )
+    quality: float = attr.ib(
+        default=2.0,
+        validator=lambda self, attr, value: None,  # validated in __attrs_post_init__
+    )
 
-    @marginal_cost.validator
-    def check_marginal_costs(self, attribute, value):
-        if not value >= 0.0:
-            raise ValueError("Marginal costs must be positive")
-
-    @quality.validator
-    def check_quality_costs(self, attribute, value):
-        if not self.marginal_cost <= value:
+    def __attrs_post_init__(self):
+        if not self.marginal_cost <= self.quality:
             raise ValueError(
                 "Quality must be at least as high as marginal costs to be active in market"
             )
 
     @abc.abstractmethod
-    def play_price(self, state, action_space, n_period, t):
+    def play_price(self, state: Tuple, action_space: List, n_period: int, t: int):
         raise NotImplementedError
 
     @abc.abstractmethod

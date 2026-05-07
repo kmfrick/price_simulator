@@ -23,8 +23,8 @@ class EnvironmentStrategy(metaclass=abc.ABCMeta):
     agents: List[AgentStrategy] = attr.ib(factory=list)
     possible_prices: List[float] = attr.ib(factory=list)
     demand: MarketDemandStrategy = attr.ib(factory=LogitDemand)
-    nash_prices: np.array = attr.ib(init=False)
-    monopoly_prices: np.array = attr.ib(init=False)
+    nash_prices: np.ndarray = attr.ib(init=False)
+    monopoly_prices: np.ndarray = attr.ib(init=False)
 
     def __attrs_post_init__(self):
         """Compute Nash Price and Monopoly price after initialization."""
@@ -33,10 +33,10 @@ class EnvironmentStrategy(metaclass=abc.ABCMeta):
                 assert len(self.possible_prices) > 0.0, (
                     "Priosoners Dilemma needs two possible prices"
                 )
-                self.monopoly_prices = [
+                self.monopoly_prices = np.array([
                     max(self.possible_prices),
                     max(self.possible_prices),
-                ]
+                ])
                 self.nash_prices = np.array(
                     [min(self.possible_prices), min(self.possible_prices)]
                 )
@@ -65,29 +65,29 @@ class DiscreteSynchronEnvironment(EnvironmentStrategy):
     Then agents have the opportunity to learn.
     """
 
-    n_periods: int = attr.ib(default=1)
-    markup: float = attr.ib(default=0.1)
-    n_prices: int = attr.ib(default=15)
-    convergence_after: int = attr.ib(default=np.inf)
-    history_after: int = attr.ib(default=np.inf)
+    n_periods: int = attr.ib(
+        default=1,
+        validator=lambda self, attr, value: (
+            ValueError("Number of periods must be strictly positive") if not 0 < value else None
+        ),
+    )
+    markup: float = attr.ib(
+        default=0.1,
+        validator=lambda self, attr, value: (
+            ValueError("Price markup must be positive") if not 0 <= value else None
+        ),
+    )
+    n_prices: int = attr.ib(
+        default=15,
+        validator=lambda self, attr, value: (
+            ValueError("Number of prices must be strictly positive") if not 0 < value else None
+        ),
+    )
+    convergence_after: int | float = attr.ib(default=np.inf)
+    history_after: int | float = attr.ib(default=np.inf)
     price_history: List = attr.ib(factory=list)
     quantity_history: List = attr.ib(factory=list)
     reward_history: List = attr.ib(factory=list)
-
-    @n_periods.validator
-    def check_n_periods(self, attribute, value):
-        if not 0 < value:
-            raise ValueError("Number of periods must be strictly positive")
-
-    @markup.validator
-    def check_markup(self, attribute, value):
-        if not 0 <= value:
-            raise ValueError("Price markup must be positive")
-
-    @n_prices.validator
-    def check_n_prices(self, attribute, value):
-        if not 0 < value:
-            raise ValueError("Number of prices must be strictly positive")
 
     def play_game(self) -> int:
 
@@ -251,17 +251,37 @@ class ContSynchronEnvironment(EnvironmentStrategy):
     Agents set prices at the same time.
     After choosing prices, demand and rewards are calculated.
     Then agents have the opportunity to learn.
+
+    Note: This environment is designed to work with SACContinuous agents.
     """
 
-    n_periods: int = attr.ib(default=1)
-    markup: float = attr.ib(default=0.1)
-    convergence_after: int = attr.ib(default=np.inf)
+    n_periods: int = attr.ib(
+        default=1,
+        validator=lambda self, attr, value: (
+            ValueError("Number of periods must be strictly positive") if not 0 < value else None
+        ),
+    )
+    markup: float = attr.ib(
+        default=0.1,
+        validator=lambda self, attr, value: (
+            ValueError("Price markup must be positive") if not 0 <= value else None
+        ),
+    )
+    convergence_after: int | float = attr.ib(default=np.inf)
     price_history: List = attr.ib(factory=list)
     quantity_history: List = attr.ib(factory=list)
     reward_history: List = attr.ib(factory=list)
     q_loss_history: List = attr.ib(factory=list)
     q_baseline_history: List = attr.ib(factory=list)
     grad_norm_history: List = attr.ib(factory=list)
+    temperature_history: List = attr.ib(factory=list)
+    average_reward_history: List = attr.ib(factory=list)
+    policy_loss_history: List = attr.ib(factory=list)
+    policy_entropy_history: List = attr.ib(factory=list)
+    policy_kl_history: List = attr.ib(factory=list)
+
+    # Type override for SAC-specific agent access
+    agents: List["SACContinuous"] = attr.ib(factory=list)  # type: ignore[assignment]
     temperature_history: List = attr.ib(factory=list)
     average_reward_history: List = attr.ib(factory=list)
     policy_loss_history: List = attr.ib(factory=list)
@@ -294,12 +314,12 @@ class ContSynchronEnvironment(EnvironmentStrategy):
             (self.price_range**2) / 12
         )  # Under uniform random pricing
 
-        nash_quantities = self.demand.get_quantities(self.nash_prices, qualities)
+        nash_quantities = self.demand.get_quantities(tuple(self.nash_prices), tuple(qualities))
         self.nash_profits = np.multiply(
             np.subtract(self.nash_prices, marginal_costs), nash_quantities
         )
         monopoly_quantities = self.demand.get_quantities(
-            self.monopoly_prices, qualities
+            tuple(self.monopoly_prices), tuple(qualities)
         )
         self.monopoly_profits = np.multiply(
             np.subtract(self.monopoly_prices, marginal_costs), monopoly_quantities
@@ -318,21 +338,11 @@ class ContSynchronEnvironment(EnvironmentStrategy):
         self.policy_entropy_history = [[] for _ in self.agents]
         self.policy_kl_history = [[] for _ in self.agents]
 
-    @n_periods.validator
-    def check_n_periods(self, attribute, value):
-        if not 0 < value:
-            raise ValueError("Number of periods must be strictly positive")
-
-    @markup.validator
-    def check_markup(self, attribute, value):
-        if not 0 <= value:
-            raise ValueError("Price markup must be positive")
-
     def _denormalize_action(self, action: float) -> float:
         """Map normalized action in [-1, 1] to price space."""
         return (action + 1) * 0.5 * (self.max_price - self.min_price) + self.min_price
 
-    def _normalize_rewards(self, rewards: np.array) -> np.array:
+    def _normalize_rewards(self, rewards: np.ndarray) -> np.ndarray:
         """Normalize rewards: -1 = Nash profit, 1 = monopoly profit."""
         rewards_arr = np.asarray(rewards, dtype=np.float64)
         denom = self.monopoly_profits - self.nash_profits
@@ -340,7 +350,7 @@ class ContSynchronEnvironment(EnvironmentStrategy):
 
     def play_game(
         self,
-        learn_start: int,
+        learn_start: int = 0,
         checkpoint_callback: Optional[Callable[[int], None]] = None,
     ) -> int:
 
@@ -359,7 +369,7 @@ class ContSynchronEnvironment(EnvironmentStrategy):
                 else:
                     # agents decide about their prices (hereafter is the state different)
                     actions = tuple(
-                        agent.play_price(state, self.n_periods, t)
+                        agent.play_price(state, [], self.n_periods, t)
                         for agent in self.agents
                     )  # normalized
                 assert (np.array(actions) >= -1.0).all(), (

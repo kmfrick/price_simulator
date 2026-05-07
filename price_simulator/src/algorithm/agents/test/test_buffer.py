@@ -56,15 +56,18 @@ def test_factory_init():
         ],
     )
     env.play_game()
+    agent0 = env.agents[0]
+    agent1 = env.agents[1]
+    assert isinstance(agent0, DQN) and isinstance(agent1, DQN)
     assert np.array(
-        env.agents[0].replay_memory.sample(1)[0]
-        == env.agents[1].replay_memory.sample(1)[0]
+        agent0.replay_memory.sample(1)[0]
+        == agent1.replay_memory.sample(1)[0]
     ).all()
     assert np.array(
-        env.agents[0].replay_memory.sample(1)[3]
-        == env.agents[1].replay_memory.sample(1)[3]
+        agent0.replay_memory.sample(1)[3]
+        == agent1.replay_memory.sample(1)[3]
     ).all()
     assert np.array(
-        env.agents[0].replay_memory.sample(1)[2]
-        != env.agents[1].replay_memory.sample(1)[2]
+        agent0.replay_memory.sample(1)[2]
+        != agent1.replay_memory.sample(1)[2]
     ).all()

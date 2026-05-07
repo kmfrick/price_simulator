@@ -24,12 +24,12 @@ class ExplorationStrategy(metaclass=abc.ABCMeta):
 class EpsilonGreedy(ExplorationStrategy):
     """Exploration decision based on fixed epsilon greedy policy."""
 
-    eps: float = attr.ib(default=0.1)
-
-    @eps.validator
-    def check_epsilon(self, attribute, value):
-        if not 0 <= value <= 1:
-            raise ValueError("Epsilon must lie in [0,1]")
+    eps: float = attr.ib(
+        default=0.1,
+        validator=lambda self, attr, value: (
+            ValueError("Epsilon must lie in [0,1]") if not 0 <= value <= 1 else None
+        ),
+    )
 
     def who_am_i(self) -> str:
         return type(self).__name__ + " ({})".format(self.eps)
@@ -57,12 +57,12 @@ class DecreasingEpsilonGreedy(ExplorationStrategy):
 class Temperature(ExplorationStrategy):
     """Exploration decision with decreasing epsilon."""
 
-    beta: float = attr.ib(default=0.00001)
-
-    @beta.validator
-    def check_beta(self, attribute, value):
-        if not 0 <= value:
-            raise ValueError("Epsilon must lie in [0,1]")
+    beta: float = attr.ib(
+        default=0.00001,
+        validator=lambda self, attr, value: (
+            ValueError("Epsilon must lie in [0,1]") if not 0 <= value else None
+        ),
+    )
 
     def who_am_i(self) -> str:
         return type(self).__name__ + " ({})".format(self.beta)

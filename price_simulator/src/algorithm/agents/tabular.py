@@ -14,22 +14,19 @@ class Qlearning(AgentStrategy):
     """Q learning agent with bounded memory of 1 period"""
 
     q_matrix: Dict = attr.ib(default=None)
-    discount: float = attr.ib(default=0.95)
-    learning_rate: float = attr.ib(default=0.1)
+    discount: float = attr.ib(
+        default=0.95,
+        validator=lambda self, attr, value: (
+            ValueError("Discount factor must lie in [0,1]") if not 0 <= value <= 1 else None
+        ),
+    )
+    learning_rate: float = attr.ib(
+        default=0.1,
+        validator=lambda self, attr, value: (
+            ValueError("Learning rate must lie in [0,1)") if not 0 <= value < 1 else None
+        ),
+    )
     decision: ExplorationStrategy = attr.ib(factory=EpsilonGreedy)
-
-    @discount.validator
-    def check_discount(self, attribute, value):
-        if not 0 <= value <= 1:
-            raise ValueError("Discount factor must lie in [0,1]")
-
-    @learning_rate.validator
-    def check_learning_rate(self, attribute, value):
-        """For learning_rate = 0, the algorithm does not learn at all.
-        For learning_rate = 1, it immediately forgets what it has learned in the past.
-        """
-        if not 0 <= value < 1:
-            raise ValueError("Learning rate must lie in [0,1)")
 
     def who_am_i(self) -> str:
         return type(
@@ -42,7 +39,7 @@ class Qlearning(AgentStrategy):
             self.marginal_cost,
         )
 
-    def play_price(self, state: Tuple, action_space: List, n_period: int, t: int):
+    def play_price(self, state: Tuple, action_space: List, n_period: int, t: int) -> float:
         """Either experiment or play greedy action."""
         if not self.q_matrix:
             self.q_matrix = self.initialize_q_matrix(len(state), action_space)

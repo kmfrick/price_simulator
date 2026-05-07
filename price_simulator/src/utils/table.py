@@ -129,7 +129,7 @@ if __name__ == "__main__":
             for agent_idx, agent in enumerate(env.agents):
                 if hasattr(agent, "decision"):
                     agent.decision = EpsilonGreedy(eps=0.0)
-                agent.play_price([0, 0], 1, 0, use_target=False)
+                agent.play_price([0, 0], [], 1, 0)
                 agent.actor.load_weights(actor_paths[agent_idx])
 
             qualities = tuple(a.quality for a in env.agents)
