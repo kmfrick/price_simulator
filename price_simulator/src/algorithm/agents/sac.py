@@ -32,6 +32,14 @@ LOG_TWO = tf.constant(np.log(2.0), dtype=tf.float32)
 LOG_TWO_PI = tf.constant(np.log(2.0 * np.pi), dtype=tf.float32)
 
 
+def _should_jit_compile() -> bool:
+    for device in tf.config.list_physical_devices("GPU"):
+        details = tf.config.experimental.get_device_details(device)
+        if str(details.get("device_name", "")).upper() == "METAL":
+            return False
+    return True
+
+
 def build_sac_kwargs() -> dict:
     return dict(
         actor_hidden_size=1024,
@@ -243,10 +251,11 @@ class SACContinuous(AgentStrategy):
             logp = log_prob - tf.reduce_sum(log_det_jacobian, axis=1, keepdims=True)
             return action, logp
 
+        jit_compile = _should_jit_compile()
         self._sample_action_single_tf = tf.function(
             _compiled_sample_action,
             reduce_retracing=True,
-            jit_compile=True,
+            jit_compile=jit_compile,
             input_signature=[
                 tf.TensorSpec(shape=(1, state_dim), dtype=tf.float32),
                 tf.TensorSpec(shape=(2,), dtype=tf.int32),
@@ -256,7 +265,7 @@ class SACContinuous(AgentStrategy):
         self._sample_action_batch_train_tf = tf.function(
             _compiled_sample_action,
             reduce_retracing=True,
-            jit_compile=True,
+            jit_compile=jit_compile,
             input_signature=[
                 tf.TensorSpec(shape=(batch_dim, state_dim), dtype=tf.float32),
                 tf.TensorSpec(shape=(2,), dtype=tf.int32),
@@ -268,7 +277,7 @@ class SACContinuous(AgentStrategy):
         self._train_step = tf.function(
             self._train_step_impl,
             reduce_retracing=True,
-            jit_compile=True,
+            jit_compile=jit_compile,
             input_signature=[
                 tf.TensorSpec(shape=(batch_dim, state_dim), dtype=tf.float32),
                 tf.TensorSpec(shape=(batch_dim, action_dim), dtype=tf.float32),

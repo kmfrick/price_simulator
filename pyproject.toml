@@ -3,16 +3,20 @@ name = "algorithmic-pricing-dqn"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
-requires-python = ">=3.12"
+requires-python = ">=3.12,<3.13"
 dependencies = [
     "attrs>=26.1.0",
+    "cpprb>=11.0.0",
     "keras>=3.13.2",
     "matplotlib>=3.10.8",
-    "numpy>=2.4.3",
+    "numpy>=1.26,<2.2",
     "pandas>=3.0.1",
     "pytest>=9.0.2",
     "scipy>=1.17.1",
     "seaborn>=0.13.2",
+    "tensorflow>=2.19,<2.20",
+    "tensorflow-metal==1.2.0; platform_system == 'Darwin' and platform_machine == 'arm64'",
+    "tf-keras>=2.19,<2.20",
     "tqdm>=4.67.3",
     "ty>=0.0.24",
 ]
