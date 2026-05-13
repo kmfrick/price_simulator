@@ -20,9 +20,8 @@ from price_simulator.src.algorithm.policies import EpsilonGreedy
 
 TIMESTAMP_RE = re.compile(r"(\d{8}-\d{6})")
 STEP_RE = re.compile(r"_step(\d+)", re.IGNORECASE)
-DEFAULT_DISCOUNT_FACTOR = 0.95
 IR_SETTLE_PERIODS = 50
-END_PLOT_T = 10
+DEVIATION_HORIZON_T = 100
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -45,7 +44,7 @@ if __name__ == "__main__":
         }
     )
 
-    step_disc_gains: dict[int, list[float]] = {}
+    step_diff_gains: dict[int, list[float]] = {}
 
     rng = np.random.default_rng(0)
 
@@ -143,13 +142,17 @@ if __name__ == "__main__":
                 for _ in range(IR_SETTLE_PERIODS):
                     actions_tf = []
                     for a in env.agents:
-                        action_tf, _ = a._sample_action(current_state_tf, seed_step=0)
+                        action_tf, _ = a._sample_action(
+                            current_state_tf, deterministic=True, seed_step=None
+                        )
                         actions_tf.append(action_tf)
                     current_state_tf = tf.concat(actions_tf, axis=1)
 
                 base_actions_t0_list = []
                 for a in env.agents:
-                    action_tf, _ = a._sample_action(current_state_tf, seed_step=0)
+                    action_tf, _ = a._sample_action(
+                        current_state_tf, deterministic=True, seed_step=None
+                    )
                     base_actions_t0_list.append(float(action_tf.numpy().reshape(-1)[0]))
                 base_actions_t0 = tuple(base_actions_t0_list)
                 base_prices_t0 = tuple(
@@ -168,7 +171,7 @@ if __name__ == "__main__":
                 base_profits = []
                 state_dev_tf = current_state_tf
                 state_base_tf = current_state_tf
-                for t in range(END_PLOT_T):
+                for t in range(DEVIATION_HORIZON_T):
                     dev_actions = []
                     dev_actions_tf = []
                     for i, a in enumerate(env.agents):
@@ -178,7 +181,9 @@ if __name__ == "__main__":
                                 tf.constant([[br_action_norm]], dtype=tf.float32)
                             )
                         else:
-                            action_tf, _ = a._sample_action(state_dev_tf, seed_step=0)
+                            action_tf, _ = a._sample_action(
+                                state_dev_tf, deterministic=True, seed_step=None
+                            )
                             dev_actions.append(float(action_tf.numpy().reshape(-1)[0]))
                             dev_actions_tf.append(action_tf)
                     dev_real_prices = tuple(
@@ -196,7 +201,9 @@ if __name__ == "__main__":
                     base_actions = []
                     base_actions_tf = []
                     for a in env.agents:
-                        action_tf, _ = a._sample_action(state_base_tf, seed_step=0)
+                        action_tf, _ = a._sample_action(
+                            state_base_tf, deterministic=True, seed_step=None
+                        )
                         base_actions.append(float(action_tf.numpy().reshape(-1)[0]))
                         base_actions_tf.append(action_tf)
                     base_real_prices = tuple(
@@ -214,15 +221,13 @@ if __name__ == "__main__":
                 dev_arr = np.asarray(dev_profits, dtype=np.float32)
                 base_arr = np.asarray(base_profits, dtype=np.float32)
                 diff_col = dev_arr[:, defector_idx] - base_arr[:, defector_idx]
-                weights = np.power(
-                    DEFAULT_DISCOUNT_FACTOR,
-                    np.arange(diff_col.shape[0], dtype=np.float32),
+                differential_gain = float(
+                    np.mean(diff_col / base_arr[:, defector_idx])
                 )
-                discounted_gain = float(np.sum(diff_col * weights))
 
-                if step not in step_disc_gains:
-                    step_disc_gains[step] = []
-                step_disc_gains[step].append(discounted_gain)
+                if step not in step_diff_gains:
+                    step_diff_gains[step] = []
+                step_diff_gains[step].append(differential_gain)
 
     lines = []
     lines.append("\\begin{tabular}{lccccc}")
@@ -230,18 +235,18 @@ if __name__ == "__main__":
     lines.append(
         "Step & 25th percentile (\\%) & Median (\\%) "
         "& 75th percentile (\\%) & Mean (\\%) "
-        "& Unprofitable \\%  [95\\% CI] \\\\"
+        "& Unprofitable \\% [95\\% CI] \\\\"
     )
     lines.append("\\hline")
 
-    for step in sorted(step_disc_gains):
-        disc_vals = np.asarray(step_disc_gains[step], dtype=np.float32)
-        if disc_vals.size == 0:
+    for step in sorted(step_diff_gains):
+        diff_vals = np.asarray(step_diff_gains[step], dtype=np.float32)
+        if diff_vals.size == 0:
             continue
-        p25_disc, p50_disc, p75_disc = np.percentile(disc_vals, [25, 50, 75])
-        mean_disc = float(np.mean(disc_vals))
-        unprofit_mask = disc_vals <= 0.0
-        pct_disc = 100.0 * float(np.mean(unprofit_mask))
+        p25_diff, p50_diff, p75_diff = np.percentile(diff_vals, [25, 50, 75])
+        mean_diff = float(np.mean(diff_vals))
+        unprofit_mask = diff_vals <= 0.0
+        pct_diff = 100.0 * float(np.mean(unprofit_mask))
         boot_indices = rng.integers(
             0, unprofit_mask.size, size=(5000, unprofit_mask.size)
         )
@@ -249,21 +254,21 @@ if __name__ == "__main__":
         ci_low, ci_high = np.percentile(boot_props, [2.5, 97.5])
         step_label = f"\\num{{{step}}}"
 
-        p25_disc_pct = 100.0 * p25_disc
-        p50_disc_pct = 100.0 * p50_disc
-        p75_disc_pct = 100.0 * p75_disc
-        mean_disc_pct = 100.0 * mean_disc
+        p25_diff_pct = 100.0 * p25_diff
+        p50_diff_pct = 100.0 * p50_diff
+        p75_diff_pct = 100.0 * p75_diff
+        mean_diff_pct = 100.0 * mean_diff
 
-        p25_cell = f"{p25_disc_pct:.2g}\\%"
-        p50_cell = f"{p50_disc_pct:.2g}\\%"
-        p75_cell = f"{p75_disc_pct:.2g}\\%"
-        pct_cell = f"{pct_disc:.2g}\\%"
+        p25_cell = f"{p25_diff_pct:.2g}\\%"
+        p50_cell = f"{p50_diff_pct:.2g}\\%"
+        p75_cell = f"{p75_diff_pct:.2g}\\%"
+        pct_cell = f"{pct_diff:.2g}\\%"
         ci_cell = f"{100.0 * ci_low:.2g}\\%--{100.0 * ci_high:.2g}\\%"
         pct_ci_cell = f"{pct_cell} [{ci_cell}]"
 
         lines.append(
             f"{step_label} & {p25_cell} & {p50_cell} & {p75_cell} "
-            f"& {mean_disc_pct:.2g}\\% & {pct_ci_cell} \\\\"
+            f"& {mean_diff_pct:.2g}\\% & {pct_ci_cell} \\\\"
         )
 
     lines.append("\\hline")

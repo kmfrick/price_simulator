@@ -30,6 +30,7 @@ class EquilibriumCalculator(object):
     ) -> float:
         """Calculate profit for ith firm if it sets his price to own_price given competitor prices."""
         temp_prices = copy.deepcopy(prices)
+        own_price = float(np.asarray(own_price).reshape(-1)[0])
         temp_prices[i] = own_price
         return (
             -1

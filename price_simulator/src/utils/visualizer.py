@@ -29,6 +29,7 @@ STEP_RE = re.compile(r"_step(\d+)", re.IGNORECASE)
 DEFAULT_DISCOUNT_FACTOR = 0.95
 START_PLOT_T = -1
 END_PLOT_T = 10
+DEVIATION_HORIZON_T = 100
 MA_WINDOW = 5000
 GRID_POINTS = 50
 IR_SETTLE_PERIODS = 50
@@ -463,7 +464,7 @@ class PlotSuite:
                     base_profits = []
                     base_prices_list = []
                     state_base_tf = current_state_tf
-                    for _ in range(END_PLOT_T):
+                    for _ in range(DEVIATION_HORIZON_T):
                         base_actions = []
                         base_actions_tf = []
                         for a in env.agents:
@@ -502,7 +503,7 @@ class PlotSuite:
                     dev_profits = []
                     dev_prices_list = []
                     state_dev_tf = current_state_tf
-                    for t in range(END_PLOT_T):
+                    for t in range(DEVIATION_HORIZON_T):
                         dev_actions = []
                         dev_actions_tf = []
                         for i, a in enumerate(env.agents):
@@ -542,6 +543,9 @@ class PlotSuite:
                     discounted_gain = float(np.sum(diff_col * weights))
                     disc_base = float(np.sum(base_arr[:, defector_idx] * weights))
                     rel_discounted_gain = float(discounted_gain / disc_base)
+                    differential_gain = float(
+                        np.mean(diff_col / base_arr[:, defector_idx])
+                    )
                     all_results.append(
                         {
                             "run_id": run.run_id,
@@ -553,6 +557,7 @@ class PlotSuite:
                             "dev_prices": np.asarray(dev_prices_list, dtype=np.float32),
                             "discounted_profit_gain": discounted_gain,
                             "rel_discounted_profit_gain": rel_discounted_gain,
+                            "differential_profit_gain": differential_gain,
                         }
                     )
 
@@ -570,14 +575,14 @@ class PlotSuite:
                 ax.xaxis.set_major_formatter(StrMethodFormatter(r"{x:.1f}\%"))
                 ax.yaxis.set_major_formatter(StrMethodFormatter(r"{x:.0f}\%"))
                 plt.xlabel(
-                    rf"Relative discounted gain $\frac{{\sum_t \gamma^t(\pi_t^{{\mathrm{{dev}}}}-\pi_t^{{\mathrm{{base}}}})}}{{\sum_t \gamma^t\pi_t^{{\mathrm{{base}}}}}}$ (\%), $\gamma={DEFAULT_DISCOUNT_FACTOR}$"
+                    rf"Relative discounted gain $\frac{{\sum_t \delta^t(\pi_t^{{\mathrm{{dev}}}}-\pi_t^{{\mathrm{{base}}}})}}{{\sum_t \delta^t\pi_t^{{\mathrm{{base}}}}}}$ (\%), $\delta={DEFAULT_DISCOUNT_FACTOR}$"
                 )
                 plt.ylabel("Percent")
                 plt.savefig(self.summary_dir / "deviation_profit_rel_disc_hist.png")
                 plt.close()
             # IR for Nash equilibria
             results_for_plots = [
-                r for r in all_results if r["discounted_profit_gain"] < 0.0
+                r for r in all_results if r["differential_profit_gain"] <= 0.0
             ]
 
             collected_def_dev = []
