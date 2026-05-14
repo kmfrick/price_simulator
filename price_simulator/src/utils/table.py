@@ -2,18 +2,19 @@
 from __future__ import annotations
 
 import argparse
+import concurrent.futures
 import csv
+import gc
+import multiprocessing
+import os
 import re
 import sys
 from pathlib import Path
 
 import numpy as np
-import tensorflow as tf
 
 from tqdm import tqdm
 
-from price_simulator.src.algorithm.agents.sac import SACContinuous
-from price_simulator.src.algorithm.agents.sac import build_sac_kwargs
 from price_simulator.src.algorithm.demand import LogitDemand
 from price_simulator.src.algorithm.environment import ContSynchronEnvironment
 from price_simulator.src.algorithm.equilibrium import EquilibriumCalculator
@@ -26,6 +27,29 @@ DEVIATION_HORIZON_T = 100
 MULTI_PERIOD_DEVIATION_LENGTH = 5
 DEFAULT_DISCOUNT_FACTOR = 0.95
 DEFAULT_GRID_DEVIATION_POINTS = 15
+_TF = None
+
+
+def configure_tensorflow_runtime(gpu_id: str | None) -> None:
+    os.environ.setdefault("TF_FORCE_GPU_ALLOW_GROWTH", "true")
+    if gpu_id is not None:
+        os.environ["CUDA_VISIBLE_DEVICES"] = gpu_id
+
+
+def tensorflow_module():
+    global _TF
+    if _TF is None:
+        import tensorflow as tf
+
+        _TF = tf
+    return _TF
+
+
+def sac_dependencies():
+    from price_simulator.src.algorithm.agents.sac import SACContinuous
+    from price_simulator.src.algorithm.agents.sac import build_sac_kwargs
+
+    return SACContinuous, build_sac_kwargs
 
 
 def rollout_deviation(
@@ -37,6 +61,7 @@ def rollout_deviation(
     forced_action_norm: float,
     forced_length: int,
 ) -> np.ndarray:
+    tf = tensorflow_module()
     dev_profits = []
     state_dev_tf = current_state_tf
     for t in range(DEVIATION_HORIZON_T):
@@ -70,6 +95,7 @@ def rollout_baseline(
     qualities: tuple[float, ...],
     marginal_costs: np.ndarray,
 ) -> np.ndarray:
+    tf = tensorflow_module()
     base_profits = []
     state_base_tf = current_state_tf
     for _ in range(DEVIATION_HORIZON_T):
@@ -278,41 +304,30 @@ def format_grid_deviation_table(
     return "\n".join(lines) + "\n"
 
 
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--artifacts-dir", type=Path, default=Path.cwd() / "artifacts")
-    parser.add_argument("--output", type=Path, default=None)
-    parser.add_argument("--multi-period-output", type=Path, default=None)
-    parser.add_argument("--grid-deviation-output", type=Path, default=None)
-    parser.add_argument(
-        "--grid-deviation-points", type=int, default=DEFAULT_GRID_DEVIATION_POINTS
-    )
-    parser.add_argument("--settle-periods", type=int, default=IR_SETTLE_PERIODS)
-    parser.add_argument("--pre-window-periods", type=int, default=IR_SETTLE_PERIODS)
-    parser.add_argument("--raw-output", type=Path, default=None)
-    args = parser.parse_args()
-    if args.grid_deviation_points <= 0:
-        parser.error("--grid-deviation-points must be positive")
+def empty_timestamp_result(warnings: list[str] | None = None) -> dict[str, object]:
+    return {
+        "step_diff_gains": {},
+        "multi_period_step_diff_gains": {},
+        "grid_price_values": None,
+        "grid_pre_price_counts": {},
+        "grid_discounted_gains": {},
+        "grid_br_comparison_counts": {},
+        "raw_rows": [],
+        "warnings": warnings or [],
+    }
 
-    artifacts_dir = args.artifacts_dir
-    checkpoints_dir = artifacts_dir / "checkpoints"
-    plots_dir = artifacts_dir / "plots"
-    summary_dir = plots_dir / "summary"
-    summary_dir.mkdir(parents=True, exist_ok=True)
-    output_path = args.output or (summary_dir / "deviation_tables.tex")
-    multi_period_output_path = args.multi_period_output or (
-        summary_dir / "multi_period_deviation_tables.tex"
-    )
-    grid_deviation_output_path = args.grid_deviation_output or (
-        summary_dir / "grid_deviation_tables.tex"
-    )
 
-    unique_timestamps = set()
-    for path in artifacts_dir.glob("*.npy"):
-        timestamp_match = TIMESTAMP_RE.search(path.name)
-        if timestamp_match:
-            unique_timestamps.add(timestamp_match.group(1))
-
+def analyze_timestamp(
+    ts: str,
+    artifacts_dir: Path,
+    checkpoints_dir: Path,
+    settle_periods: int,
+    pre_window_periods: int,
+    grid_deviation_points: int,
+) -> dict[str, object]:
+    tf = tensorflow_module()
+    SACContinuous, build_sac_kwargs = sac_dependencies()
+    warnings = []
     step_diff_gains: dict[int, list[float]] = {}
     multi_period_step_diff_gains: dict[int, list[float]] = {}
     grid_price_values: np.ndarray | None = None
@@ -320,10 +335,9 @@ if __name__ == "__main__":
     grid_discounted_gains: dict[int, dict[int, list[float]]] = {}
     grid_br_comparison_counts: dict[int, list[int]] = {}
     raw_rows = []
-
     agent_kwargs = build_sac_kwargs()
 
-    for ts in tqdm(unique_timestamps, total=len(unique_timestamps)):
+    try:
         price_files = sorted(artifacts_dir.glob(f"*_prices_{ts}.npy"))
         arrays = []
         for f in price_files:
@@ -336,8 +350,8 @@ if __name__ == "__main__":
                     arr = arr.mean(axis=1)
             arrays.append(arr)
         if not arrays:
-            print(f"Warning: no price artifacts for run {ts}.")
-            continue
+            warnings.append(f"Warning: no price artifacts for run {ts}.")
+            return empty_timestamp_result(warnings)
         lengths = [arr.shape[0] for arr in arrays]
         min_len = min(lengths)
         if any(length != min_len for length in lengths):
@@ -379,7 +393,7 @@ if __name__ == "__main__":
                 continue
 
             idx = min(max(step - 1, 0), prices.shape[0] - 1)
-            start_idx = max(0, idx - args.pre_window_periods)
+            start_idx = max(0, idx - pre_window_periods)
             steady = np.mean(prices[start_idx : idx + 1], axis=0)
 
             agents = [
@@ -393,7 +407,7 @@ if __name__ == "__main__":
                 agents=agents,
             )
             if len(actor_paths) != len(env.agents):
-                print(
+                warnings.append(
                     f"Warning: run {ts} step {step} has {len(actor_paths)} actor paths."
                 )
                 continue
@@ -407,7 +421,7 @@ if __name__ == "__main__":
             marginal_costs = np.array([a.marginal_cost for a in env.agents])
             eq = EquilibriumCalculator(demand=env.demand)
             current_grid_prices = np.linspace(
-                env.min_price, env.max_price, args.grid_deviation_points
+                env.min_price, env.max_price, grid_deviation_points
             )
             if grid_price_values is None:
                 grid_price_values = current_grid_prices
@@ -416,7 +430,7 @@ if __name__ == "__main__":
                 current_state_tf = tf.convert_to_tensor(
                     np.expand_dims(steady, axis=0), dtype=tf.float32
                 )
-                for _ in range(args.settle_periods):
+                for _ in range(settle_periods):
                     actions_tf = []
                     for a in env.agents:
                         action_tf, _ = a._sample_action(
@@ -491,7 +505,7 @@ if __name__ == "__main__":
                         "run_id": ts,
                         "step": step,
                         "defector_idx": defector_idx,
-                        "settle_periods": args.settle_periods,
+                        "settle_periods": settle_periods,
                         "one_period_gain": one_period_gain,
                         "multi_period_gain": multi_period_gain,
                     }
@@ -538,6 +552,210 @@ if __name__ == "__main__":
                         multi_period_step_diff_gains[step] = []
                     multi_period_step_diff_gains[step].append(multi_period_gain)
 
+        return {
+            "step_diff_gains": step_diff_gains,
+            "multi_period_step_diff_gains": multi_period_step_diff_gains,
+            "grid_price_values": grid_price_values,
+            "grid_pre_price_counts": grid_pre_price_counts,
+            "grid_discounted_gains": grid_discounted_gains,
+            "grid_br_comparison_counts": grid_br_comparison_counts,
+            "raw_rows": raw_rows,
+            "warnings": warnings,
+        }
+    finally:
+        tf.keras.backend.clear_session()
+        gc.collect()
+
+
+def parse_gpu_ids(gpus: str | None) -> list[str]:
+    if gpus is None:
+        return []
+    return [gpu.strip() for gpu in gpus.split(",") if gpu.strip()]
+
+
+def init_parallel_worker(gpu_id: str | None) -> None:
+    configure_tensorflow_runtime(gpu_id)
+
+
+def iter_timestamp_results(
+    timestamps: list[str],
+    artifacts_dir: Path,
+    checkpoints_dir: Path,
+    workers: int,
+    gpu_ids: list[str],
+    settle_periods: int,
+    pre_window_periods: int,
+    grid_deviation_points: int,
+):
+    if not timestamps:
+        return
+
+    if workers == 1:
+        gpu_id = gpu_ids[0] if gpu_ids else None
+        configure_tensorflow_runtime(gpu_id)
+        for ts in tqdm(timestamps, total=len(timestamps)):
+            yield analyze_timestamp(
+                ts,
+                artifacts_dir,
+                checkpoints_dir,
+                settle_periods,
+                pre_window_periods,
+                grid_deviation_points,
+            )
+        return
+
+    ctx = multiprocessing.get_context("spawn")
+    executors = []
+    futures = []
+    try:
+        for worker_idx in range(workers):
+            gpu_id = gpu_ids[worker_idx % len(gpu_ids)] if gpu_ids else None
+            executors.append(
+                concurrent.futures.ProcessPoolExecutor(
+                    max_workers=1,
+                    mp_context=ctx,
+                    initializer=init_parallel_worker,
+                    initargs=(gpu_id,),
+                )
+            )
+
+        for idx, ts in enumerate(timestamps):
+            executor = executors[idx % len(executors)]
+            futures.append(
+                executor.submit(
+                    analyze_timestamp,
+                    ts,
+                    artifacts_dir,
+                    checkpoints_dir,
+                    settle_periods,
+                    pre_window_periods,
+                    grid_deviation_points,
+                )
+            )
+
+        completed = concurrent.futures.as_completed(futures)
+        for future in tqdm(completed, total=len(futures)):
+            yield future.result()
+    finally:
+        for executor in executors:
+            executor.shutdown(wait=True, cancel_futures=False)
+
+
+def merge_timestamp_result(
+    result: dict[str, object],
+    step_diff_gains: dict[int, list[float]],
+    multi_period_step_diff_gains: dict[int, list[float]],
+    grid_pre_price_counts: dict[int, int],
+    grid_discounted_gains: dict[int, dict[int, list[float]]],
+    grid_br_comparison_counts: dict[int, list[int]],
+    raw_rows: list[dict[str, object]],
+) -> np.ndarray | None:
+    for step, values in result["step_diff_gains"].items():
+        step_diff_gains.setdefault(step, []).extend(values)
+
+    for step, values in result["multi_period_step_diff_gains"].items():
+        multi_period_step_diff_gains.setdefault(step, []).extend(values)
+
+    for price_idx, count in result["grid_pre_price_counts"].items():
+        grid_pre_price_counts[price_idx] = grid_pre_price_counts.get(price_idx, 0) + count
+
+    for row_idx, row_gains in result["grid_discounted_gains"].items():
+        target_row = grid_discounted_gains.setdefault(row_idx, {})
+        for col_idx, gains in row_gains.items():
+            target_row.setdefault(col_idx, []).extend(gains)
+
+    for price_idx, counts in result["grid_br_comparison_counts"].items():
+        target_counts = grid_br_comparison_counts.setdefault(price_idx, [0, 0])
+        target_counts[0] += counts[0]
+        target_counts[1] += counts[1]
+
+    raw_rows.extend(result["raw_rows"])
+    return result["grid_price_values"]
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--artifacts-dir", type=Path, default=Path.cwd() / "artifacts")
+    parser.add_argument("--output", type=Path, default=None)
+    parser.add_argument("--multi-period-output", type=Path, default=None)
+    parser.add_argument("--grid-deviation-output", type=Path, default=None)
+    parser.add_argument(
+        "--grid-deviation-points", type=int, default=DEFAULT_GRID_DEVIATION_POINTS
+    )
+    parser.add_argument("--settle-periods", type=int, default=IR_SETTLE_PERIODS)
+    parser.add_argument("--pre-window-periods", type=int, default=IR_SETTLE_PERIODS)
+    parser.add_argument("--raw-output", type=Path, default=None)
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=1,
+        help="Number of timestamp workers. Use --gpus to pin workers to GPUs.",
+    )
+    parser.add_argument(
+        "--gpus",
+        type=str,
+        default=None,
+        help="Comma-separated GPU ids assigned to workers round-robin, e.g. 0,1.",
+    )
+    args = parser.parse_args(argv)
+    if args.grid_deviation_points <= 0:
+        parser.error("--grid-deviation-points must be positive")
+    if args.workers <= 0:
+        parser.error("--workers must be positive")
+
+    artifacts_dir = args.artifacts_dir
+    checkpoints_dir = artifacts_dir / "checkpoints"
+    plots_dir = artifacts_dir / "plots"
+    summary_dir = plots_dir / "summary"
+    summary_dir.mkdir(parents=True, exist_ok=True)
+    output_path = args.output or (summary_dir / "deviation_tables.tex")
+    multi_period_output_path = args.multi_period_output or (
+        summary_dir / "multi_period_deviation_tables.tex"
+    )
+    grid_deviation_output_path = args.grid_deviation_output or (
+        summary_dir / "grid_deviation_tables.tex"
+    )
+
+    unique_timestamps = set()
+    for path in artifacts_dir.glob("*.npy"):
+        timestamp_match = TIMESTAMP_RE.search(path.name)
+        if timestamp_match:
+            unique_timestamps.add(timestamp_match.group(1))
+    timestamps = sorted(unique_timestamps)
+    gpu_ids = parse_gpu_ids(args.gpus)
+
+    step_diff_gains: dict[int, list[float]] = {}
+    multi_period_step_diff_gains: dict[int, list[float]] = {}
+    grid_price_values: np.ndarray | None = None
+    grid_pre_price_counts: dict[int, int] = {}
+    grid_discounted_gains: dict[int, dict[int, list[float]]] = {}
+    grid_br_comparison_counts: dict[int, list[int]] = {}
+    raw_rows = []
+
+    for result in iter_timestamp_results(
+        timestamps,
+        artifacts_dir,
+        checkpoints_dir,
+        args.workers,
+        gpu_ids,
+        args.settle_periods,
+        args.pre_window_periods,
+        args.grid_deviation_points,
+    ):
+        for warning in result["warnings"]:
+            print(warning)
+        result_grid_prices = merge_timestamp_result(
+            result,
+            step_diff_gains,
+            multi_period_step_diff_gains,
+            grid_pre_price_counts,
+            grid_discounted_gains,
+            grid_br_comparison_counts,
+            raw_rows,
+        )
+        if grid_price_values is None and result_grid_prices is not None:
+            grid_price_values = result_grid_prices
+
     output_text = format_deviation_table(step_diff_gains)
     multi_period_output_text = format_deviation_table(multi_period_step_diff_gains)
     if grid_price_values is None:
@@ -570,3 +788,8 @@ if __name__ == "__main__":
     print(output_text)
     print(multi_period_output_text)
     print(grid_output_text)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
