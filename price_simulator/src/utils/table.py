@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import csv
 import re
 import sys
 from pathlib import Path
@@ -148,6 +149,9 @@ if __name__ == "__main__":
     parser.add_argument("--artifacts-dir", type=Path, default=Path.cwd() / "artifacts")
     parser.add_argument("--output", type=Path, default=None)
     parser.add_argument("--multi-period-output", type=Path, default=None)
+    parser.add_argument("--settle-periods", type=int, default=IR_SETTLE_PERIODS)
+    parser.add_argument("--pre-window-periods", type=int, default=IR_SETTLE_PERIODS)
+    parser.add_argument("--raw-output", type=Path, default=None)
     args = parser.parse_args()
 
     artifacts_dir = args.artifacts_dir
@@ -168,6 +172,7 @@ if __name__ == "__main__":
 
     step_diff_gains: dict[int, list[float]] = {}
     multi_period_step_diff_gains: dict[int, list[float]] = {}
+    raw_rows = []
 
     agent_kwargs = build_sac_kwargs()
 
@@ -227,7 +232,7 @@ if __name__ == "__main__":
                 continue
 
             idx = min(max(step - 1, 0), prices.shape[0] - 1)
-            start_idx = max(0, idx - IR_SETTLE_PERIODS)
+            start_idx = max(0, idx - args.pre_window_periods)
             steady = np.mean(prices[start_idx : idx + 1], axis=0)
 
             agents = [
@@ -259,7 +264,7 @@ if __name__ == "__main__":
                 current_state_tf = tf.convert_to_tensor(
                     np.expand_dims(steady, axis=0), dtype=tf.float32
                 )
-                for _ in range(IR_SETTLE_PERIODS):
+                for _ in range(args.settle_periods):
                     actions_tf = []
                     for a in env.agents:
                         action_tf, _ = a._sample_action(
@@ -312,6 +317,16 @@ if __name__ == "__main__":
                 multi_period_gain = differential_gain(
                     multi_period_dev_arr, base_arr, defector_idx
                 )
+                raw_rows.append(
+                    {
+                        "run_id": ts,
+                        "step": step,
+                        "defector_idx": defector_idx,
+                        "settle_periods": args.settle_periods,
+                        "one_period_gain": one_period_gain,
+                        "multi_period_gain": multi_period_gain,
+                    }
+                )
 
                 if step not in step_diff_gains:
                     step_diff_gains[step] = []
@@ -325,5 +340,20 @@ if __name__ == "__main__":
     multi_period_output_text = format_deviation_table(multi_period_step_diff_gains)
     output_path.write_text(output_text)
     multi_period_output_path.write_text(multi_period_output_text)
+    if args.raw_output is not None:
+        with args.raw_output.open("w", newline="") as raw_file:
+            writer = csv.DictWriter(
+                raw_file,
+                fieldnames=[
+                    "run_id",
+                    "step",
+                    "defector_idx",
+                    "settle_periods",
+                    "one_period_gain",
+                    "multi_period_gain",
+                ],
+            )
+            writer.writeheader()
+            writer.writerows(raw_rows)
     print(output_text)
     print(multi_period_output_text)
