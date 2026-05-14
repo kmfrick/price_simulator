@@ -30,6 +30,8 @@ DEFAULT_DISCOUNT_FACTOR = 0.95
 START_PLOT_T = -1
 END_PLOT_T = 10
 DEVIATION_HORIZON_T = 100
+MULTI_PERIOD_DEVIATION_LENGTH = 5
+MULTI_PERIOD_END_PLOT_T = 15
 MA_WINDOW = 5000
 GRID_POINTS = 50
 IR_SETTLE_PERIODS = 50
@@ -126,6 +128,217 @@ class PlotSuite:
         min_len = min(arr.shape[0] for arr in arrays)
         arrays = [arr[:min_len] for arr in arrays]
         return np.mean(np.stack(arrays, axis=0), axis=0)
+
+    def _rollout_deviation(
+        self,
+        env: ContSynchronEnvironment,
+        current_state_tf: tf.Tensor,
+        qualities: tuple[float, ...],
+        marginal_costs: np.ndarray,
+        defector_idx: int,
+        forced_action_norm: float,
+        forced_length: int,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        dev_profits = []
+        dev_prices_list = []
+        state_dev_tf = current_state_tf
+        for t in range(DEVIATION_HORIZON_T):
+            dev_actions = []
+            dev_actions_tf = []
+            for i, a in enumerate(env.agents):
+                if t < forced_length and i == defector_idx:
+                    dev_actions.append(forced_action_norm)
+                    dev_actions_tf.append(
+                        tf.constant([[forced_action_norm]], dtype=tf.float32)
+                    )
+                else:
+                    action_tf, _ = a._sample_action(
+                        state_dev_tf, deterministic=True, seed_step=None
+                    )
+                    dev_actions.append(float(action_tf.numpy().reshape(-1)[0]))
+                    dev_actions_tf.append(action_tf)
+            dev_real_prices = tuple(env._denormalize_action(a) for a in dev_actions)
+            dev_qs = env.demand.get_quantities(dev_real_prices, qualities)
+            dev_rews = tuple(
+                np.multiply(
+                    np.subtract(dev_real_prices, marginal_costs),
+                    dev_qs,
+                )
+            )
+            dev_profits.append(dev_rews)
+            dev_prices_list.append(dev_real_prices)
+            state_dev_tf = tf.concat(dev_actions_tf, axis=1)
+        return (
+            np.asarray(dev_profits, dtype=np.float32),
+            np.asarray(dev_prices_list, dtype=np.float32),
+        )
+
+    def _plot_ir_price_paths(
+        self,
+        results_for_plots: list[dict],
+        session_prefix: str,
+        aggregate_filename: str,
+        end_plot_t: int,
+        aggregate_relative_to_pre_deviation: bool = False,
+    ):
+        collected_def_dev_prices = []
+        collected_nondef_dev_prices = []
+        collected_def_pre_prices = []
+        collected_nondef_pre_prices = []
+        common_pre_len = None
+        common_dev_len = None
+
+        for r in results_for_plots:
+            def_idx = r["defector_idx"]
+            dev_prices_abs = np.asarray(r["dev_prices"])
+            pre_prices_abs = np.asarray(r["pre_prices"])
+            def_dev_abs = dev_prices_abs[:, def_idx]
+            def_pre_abs = pre_prices_abs[:, def_idx]
+            n_agents = dev_prices_abs.shape[1]
+            others_mask = np.arange(n_agents) != def_idx
+            if np.any(others_mask):
+                nondef_dev_abs = np.mean(dev_prices_abs[:, others_mask], axis=1)
+                nondef_pre_abs = np.mean(pre_prices_abs[:, others_mask], axis=1)
+            else:
+                nondef_dev_abs = np.zeros_like(def_dev_abs)
+                nondef_pre_abs = np.zeros_like(def_pre_abs)
+
+            baseline_def_price = def_pre_abs[-1]
+            baseline_nondef_price = nondef_pre_abs[-1]
+            def_dev_deviation = def_dev_abs - baseline_def_price
+            def_pre_deviation = def_pre_abs - baseline_def_price
+            nondef_dev_deviation = nondef_dev_abs - baseline_nondef_price
+            nondef_pre_deviation = nondef_pre_abs - baseline_nondef_price
+
+            collected_def_dev_prices.append(def_dev_abs)
+            collected_nondef_dev_prices.append(nondef_dev_abs)
+            collected_def_pre_prices.append(def_pre_abs)
+            collected_nondef_pre_prices.append(nondef_pre_abs)
+            if common_pre_len is None or def_pre_abs.shape[0] < common_pre_len:
+                common_pre_len = def_pre_abs.shape[0]
+            if common_dev_len is None or def_dev_abs.shape[0] < common_dev_len:
+                common_dev_len = def_dev_abs.shape[0]
+
+            xs = np.arange(-def_pre_abs.shape[0], def_dev_abs.shape[0])
+            full_def_dev = np.concatenate([def_pre_deviation, def_dev_deviation])
+            full_nondef_dev = np.concatenate(
+                [nondef_pre_deviation, nondef_dev_deviation]
+            )
+            out_path = self.sessions_dir / str(r["run_id"])
+            out_path.mkdir(parents=True, exist_ok=True)
+            fig, ax = plt.subplots()
+            ax.plot(
+                xs,
+                full_def_dev,
+                label="Defector Deviation",
+                marker="o",
+                linestyle="--",
+            )
+            ax.plot(
+                xs,
+                full_nondef_dev,
+                label="Non-Defector Deviation",
+                linestyle="--",
+                marker="o",
+            )
+            ax.axvline(0, alpha=0.4)
+            ax.set_xlim(START_PLOT_T, end_plot_t)
+            ax.set_xlabel("Time")
+            ax.set_ylabel("Deviation from Steady-State Price")
+            ax.legend()
+            fig.tight_layout()
+            fig.savefig(out_path / f"{session_prefix}_{r['run_id']}_def{def_idx}.png")
+            plt.close(fig)
+
+        if common_pre_len is None or common_dev_len is None:
+            return None
+
+        xs_agg = np.arange(-common_pre_len, common_dev_len)
+        def_pre_arr = np.array(
+            [arr[:common_pre_len] for arr in collected_def_pre_prices]
+        )
+        nondef_pre_arr = np.array(
+            [arr[:common_pre_len] for arr in collected_nondef_pre_prices]
+        )
+        def_dev_arr = np.array(
+            [arr[:common_dev_len] for arr in collected_def_dev_prices]
+        )
+        nondef_dev_arr = np.array(
+            [arr[:common_dev_len] for arr in collected_nondef_dev_prices]
+        )
+
+        if aggregate_relative_to_pre_deviation:
+            def_baseline = def_pre_arr[:, -1]
+            nondef_baseline = nondef_pre_arr[:, -1]
+            def_denom = np.where(np.abs(def_baseline) < 1e-9, np.nan, def_baseline)
+            nondef_denom = np.where(
+                np.abs(nondef_baseline) < 1e-9, np.nan, nondef_baseline
+            )
+            def_pre_arr = (
+                (def_pre_arr - def_baseline[:, None]) / def_denom[:, None]
+            )
+            def_dev_arr = (
+                (def_dev_arr - def_baseline[:, None]) / def_denom[:, None]
+            )
+            nondef_pre_arr = (
+                (nondef_pre_arr - nondef_baseline[:, None]) / nondef_denom[:, None]
+            )
+            nondef_dev_arr = (
+                (nondef_dev_arr - nondef_baseline[:, None]) / nondef_denom[:, None]
+            )
+            def_pre_arr = np.nan_to_num(def_pre_arr * 100.0)
+            def_dev_arr = np.nan_to_num(def_dev_arr * 100.0)
+            nondef_pre_arr = np.nan_to_num(nondef_pre_arr * 100.0)
+            nondef_dev_arr = np.nan_to_num(nondef_dev_arr * 100.0)
+            def_label = "Mean Defector Price Deviation"
+            nondef_label = "Mean Non-Defector Price Deviation"
+            y_label = r"Deviation from Pre-Deviation Price (\%)"
+        else:
+            def_label = "Mean Defector Price"
+            nondef_label = "Mean Non-Defector Price"
+            y_label = "Price"
+
+        fig, ax = plt.subplots()
+        stat_def_pre = np.mean(def_pre_arr, axis=0)
+        stat_nondef_pre = np.mean(nondef_pre_arr, axis=0)
+        stat_def_dev = np.mean(def_dev_arr, axis=0)
+        stat_nondef_dev = np.mean(nondef_dev_arr, axis=0)
+        full_stat_def = np.concatenate([stat_def_pre, stat_def_dev])
+        full_stat_nondef = np.concatenate([stat_nondef_pre, stat_nondef_dev])
+        ax.plot(
+            xs_agg,
+            full_stat_def,
+            label=def_label,
+            linestyle="--",
+            marker="o",
+        )
+        ax.plot(
+            xs_agg,
+            full_stat_nondef,
+            label=nondef_label,
+            linestyle="--",
+            marker="o",
+        )
+        ax.axvline(0, alpha=0.4)
+        ax.set_xlim(START_PLOT_T, end_plot_t)
+        ax.set_xlabel("Time")
+        ax.set_ylabel(y_label)
+        if aggregate_relative_to_pre_deviation:
+            ax.yaxis.set_major_formatter(StrMethodFormatter(r"{x:.1f}\%"))
+        ax.legend()
+        fig.tight_layout()
+        fig.savefig(self.summary_dir / aggregate_filename)
+        plt.close(fig)
+
+        return (
+            xs_agg,
+            common_pre_len,
+            common_dev_len,
+            collected_def_dev_prices,
+            collected_nondef_dev_prices,
+            collected_def_pre_prices,
+            collected_nondef_pre_prices,
+        )
 
     def _plot_phase_diagram(
         self,
@@ -430,6 +643,7 @@ class PlotSuite:
 
         if runs_with_final:
             all_results = []
+            multi_period_results = []
             for run in tqdm(runs_with_final, desc="Impulse response"):
                 prices = np.asarray(run.prices, dtype=np.float32)
                 if prices.ndim == 1:
@@ -500,41 +714,15 @@ class PlotSuite:
                     )
                     defect_t = 0
                     br_action_norm = br_action_norm_t0
-                    dev_profits = []
-                    dev_prices_list = []
-                    state_dev_tf = current_state_tf
-                    for t in range(DEVIATION_HORIZON_T):
-                        dev_actions = []
-                        dev_actions_tf = []
-                        for i, a in enumerate(env.agents):
-                            if t == defect_t and i == defector_idx:
-                                dev_actions.append(br_action_norm)
-                                dev_actions_tf.append(
-                                    tf.constant([[br_action_norm]], dtype=tf.float32)
-                                )
-                            else:
-                                action_tf, _ = a._sample_action(
-                                    state_dev_tf, deterministic=True, seed_step=None
-                                )
-                                dev_actions.append(
-                                    float(action_tf.numpy().reshape(-1)[0])
-                                )
-                                dev_actions_tf.append(action_tf)
-                        dev_real_prices = tuple(
-                            env._denormalize_action(a) for a in dev_actions
-                        )
-                        dev_qs = env.demand.get_quantities(dev_real_prices, qualities)
-                        dev_rews = tuple(
-                            np.multiply(
-                                np.subtract(dev_real_prices, marginal_costs),
-                                dev_qs,
-                            )
-                        )
-                        dev_profits.append(dev_rews)
-                        dev_prices_list.append(dev_real_prices)
-                        state_dev_tf = tf.concat(dev_actions_tf, axis=1)
-
-                    dev_arr = np.asarray(dev_profits, dtype=np.float32)
+                    dev_arr, dev_prices_arr = self._rollout_deviation(
+                        env,
+                        current_state_tf,
+                        qualities,
+                        marginal_costs,
+                        defector_idx,
+                        br_action_norm,
+                        forced_length=1,
+                    )
                     diff_col = dev_arr[:, defector_idx] - base_arr[:, defector_idx]
                     weights = np.power(
                         DEFAULT_DISCOUNT_FACTOR,
@@ -554,10 +742,56 @@ class PlotSuite:
                             "pre_prices": np.asarray(pre_prices_arr, dtype=np.float32),
                             "dev_profits": dev_arr,
                             "base_profits": base_arr,
-                            "dev_prices": np.asarray(dev_prices_list, dtype=np.float32),
+                            "dev_prices": dev_prices_arr,
                             "discounted_profit_gain": discounted_gain,
                             "rel_discounted_profit_gain": rel_discounted_gain,
                             "differential_profit_gain": differential_gain,
+                        }
+                    )
+                    (
+                        multi_period_dev_arr,
+                        multi_period_dev_prices_arr,
+                    ) = self._rollout_deviation(
+                        env,
+                        current_state_tf,
+                        qualities,
+                        marginal_costs,
+                        defector_idx,
+                        br_action_norm,
+                        forced_length=MULTI_PERIOD_DEVIATION_LENGTH,
+                    )
+                    multi_period_diff_col = (
+                        multi_period_dev_arr[:, defector_idx]
+                        - base_arr[:, defector_idx]
+                    )
+                    multi_period_discounted_gain = float(
+                        np.sum(multi_period_diff_col * weights)
+                    )
+                    multi_period_rel_discounted_gain = float(
+                        multi_period_discounted_gain / disc_base
+                    )
+                    multi_period_differential_gain = float(
+                        np.mean(
+                            multi_period_diff_col / base_arr[:, defector_idx]
+                        )
+                    )
+                    multi_period_results.append(
+                        {
+                            "run_id": run.run_id,
+                            "defector_idx": defector_idx,
+                            "deviation_length": MULTI_PERIOD_DEVIATION_LENGTH,
+                            "pre_prices": np.asarray(pre_prices_arr, dtype=np.float32),
+                            "dev_profits": multi_period_dev_arr,
+                            "base_profits": base_arr,
+                            "dev_prices": multi_period_dev_prices_arr,
+                            "discounted_profit_gain": multi_period_discounted_gain,
+                            "rel_discounted_profit_gain": (
+                                multi_period_rel_discounted_gain
+                            ),
+                            "differential_profit_gain": (
+                                multi_period_differential_gain
+                            ),
+                            "one_period_differential_profit_gain": differential_gain,
                         }
                     )
 
@@ -585,127 +819,24 @@ class PlotSuite:
                 r for r in all_results if r["differential_profit_gain"] <= 0.0
             ]
 
-            collected_def_dev = []
-            collected_nondef_dev = []
-            collected_def_pre = []
-            collected_nondef_pre = []
-            collected_def_dev_prices = []
-            collected_nondef_dev_prices = []
-            collected_def_pre_prices = []
-            collected_nondef_pre_prices = []
-            common_pre_len = None
-            common_dev_len = None
-
-            for r in results_for_plots:
-                def_idx = r["defector_idx"]
-                dev_prices_abs = np.asarray(r["dev_prices"])
-                pre_prices_abs = np.asarray(r["pre_prices"])
-                def_dev_abs = dev_prices_abs[:, def_idx]
-                def_pre_abs = pre_prices_abs[:, def_idx]
-                n_agents = dev_prices_abs.shape[1]
-                others_mask = np.arange(n_agents) != def_idx
-                if np.any(others_mask):
-                    nondef_dev_abs = np.mean(dev_prices_abs[:, others_mask], axis=1)
-                    nondef_pre_abs = np.mean(pre_prices_abs[:, others_mask], axis=1)
-                else:
-                    nondef_dev_abs = np.zeros_like(def_dev_abs)
-                    nondef_pre_abs = np.zeros_like(def_pre_abs)
-
-                baseline_def_price = def_pre_abs[-1]
-                baseline_nondef_price = nondef_pre_abs[-1]
-                def_dev_deviation = def_dev_abs - baseline_def_price
-                def_pre_deviation = def_pre_abs - baseline_def_price
-                nondef_dev_deviation = nondef_dev_abs - baseline_nondef_price
-                nondef_pre_deviation = nondef_pre_abs - baseline_nondef_price
-
-                collected_def_dev.append(def_dev_deviation)
-                collected_nondef_dev.append(nondef_dev_deviation)
-                collected_def_pre.append(def_pre_deviation)
-                collected_nondef_pre.append(nondef_pre_deviation)
-                collected_def_dev_prices.append(def_dev_abs)
-                collected_nondef_dev_prices.append(nondef_dev_abs)
-                collected_def_pre_prices.append(def_pre_abs)
-                collected_nondef_pre_prices.append(nondef_pre_abs)
-                if common_pre_len is None or def_pre_abs.shape[0] < common_pre_len:
-                    common_pre_len = def_pre_abs.shape[0]
-                if common_dev_len is None or def_dev_abs.shape[0] < common_dev_len:
-                    common_dev_len = def_dev_abs.shape[0]
-
-                xs = np.arange(-def_pre_abs.shape[0], def_dev_abs.shape[0])
-                full_def_dev = np.concatenate([def_pre_deviation, def_dev_deviation])
-                full_nondef_dev = np.concatenate(
-                    [nondef_pre_deviation, nondef_dev_deviation]
-                )
-                out_path = self.sessions_dir / str(r["run_id"])
-                out_path.mkdir(parents=True, exist_ok=True)
-                fig, ax = plt.subplots()
-                ax.plot(
-                    xs,
-                    full_def_dev,
-                    label="Defector Deviation",
-                    marker="o",
-                    linestyle="--",
-                )
-                ax.plot(
-                    xs,
-                    full_nondef_dev,
-                    label="Non-Defector Deviation",
-                    linestyle="--",
-                    marker="o",
-                )
-                ax.axvline(0, alpha=0.4)
-                ax.set_xlim(START_PLOT_T, END_PLOT_T)
-                ax.set_xlabel("Time")
-                ax.set_ylabel("Deviation from Steady-State Price")
-                ax.legend()
-                fig.tight_layout()
-                fig.savefig(out_path / f"ir_{r['run_id']}_def{def_idx}.png")
-                plt.close(fig)
-
-            xs_agg = np.arange(-common_pre_len, common_dev_len)
+            ir_plot_data = self._plot_ir_price_paths(
+                results_for_plots,
+                session_prefix="ir",
+                aggregate_filename="ir_aggregate_mean.png",
+                end_plot_t=END_PLOT_T,
+            )
+            if ir_plot_data is None:
+                return 0
+            (
+                xs_agg,
+                common_pre_len,
+                common_dev_len,
+                collected_def_dev_prices,
+                collected_nondef_dev_prices,
+                collected_def_pre_prices,
+                collected_nondef_pre_prices,
+            ) = ir_plot_data
             idx_zero = common_pre_len
-            def_pre_arr = np.array(
-                [arr[:common_pre_len] for arr in collected_def_pre_prices]
-            )
-            nondef_pre_arr = np.array(
-                [arr[:common_pre_len] for arr in collected_nondef_pre_prices]
-            )
-            def_dev_arr = np.array(
-                [arr[:common_dev_len] for arr in collected_def_dev_prices]
-            )
-            nondef_dev_arr = np.array(
-                [arr[:common_dev_len] for arr in collected_nondef_dev_prices]
-            )
-
-            fig, ax = plt.subplots()
-            stat_def_pre = np.mean(def_pre_arr, axis=0)
-            stat_nondef_pre = np.mean(nondef_pre_arr, axis=0)
-            stat_def_dev = np.mean(def_dev_arr, axis=0)
-            stat_nondef_dev = np.mean(nondef_dev_arr, axis=0)
-            full_stat_def = np.concatenate([stat_def_pre, stat_def_dev])
-            full_stat_nondef = np.concatenate([stat_nondef_pre, stat_nondef_dev])
-            ax.plot(
-                xs_agg,
-                full_stat_def,
-                label="Mean Defector Price",
-                linestyle="--",
-                marker="o",
-            )
-            ax.plot(
-                xs_agg,
-                full_stat_nondef,
-                label="Mean Non-Defector Price",
-                linestyle="--",
-                marker="o",
-            )
-            ax.axvline(0, alpha=0.4)
-            ax.set_xlim(START_PLOT_T, END_PLOT_T)
-            ax.set_xlabel("Time")
-            ax.set_ylabel("Price")
-            ax.legend()
-            fig.tight_layout()
-            fig.savefig(self.summary_dir / "ir_aggregate_mean.png")
-            plt.close(fig)
 
             fig, ax = plt.subplots()
             def_pre_prices = np.array(
@@ -784,6 +915,19 @@ class PlotSuite:
             fig.tight_layout()
             fig.savefig(self.summary_dir / "ir_aggregate_boxplot.png")
             plt.close(fig)
+
+            multi_period_results_for_plots = [
+                r
+                for r in multi_period_results
+                if r["one_period_differential_profit_gain"] <= 0.0
+            ]
+            self._plot_ir_price_paths(
+                multi_period_results_for_plots,
+                session_prefix="ir_multi_period",
+                aggregate_filename="ir_multi_period_aggregate_mean.png",
+                end_plot_t=MULTI_PERIOD_END_PLOT_T,
+                aggregate_relative_to_pre_deviation=True,
+            )
         return 0
 
 
