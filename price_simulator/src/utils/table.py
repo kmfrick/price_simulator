@@ -24,6 +24,8 @@ STEP_RE = re.compile(r"_step(\d+)", re.IGNORECASE)
 IR_SETTLE_PERIODS = 50
 DEVIATION_HORIZON_T = 100
 MULTI_PERIOD_DEVIATION_LENGTH = 5
+DEFAULT_DISCOUNT_FACTOR = 0.95
+DEFAULT_GRID_DEVIATION_POINTS = 15
 
 
 def rollout_deviation(
@@ -96,6 +98,19 @@ def differential_gain(
     return float(np.mean(diff_col / base_arr[:, defector_idx]))
 
 
+def relative_discounted_gain(
+    dev_arr: np.ndarray,
+    base_arr: np.ndarray,
+    defector_idx: int,
+    discount_factor: float,
+) -> float:
+    diff_col = dev_arr[:, defector_idx] - base_arr[:, defector_idx]
+    weights = np.power(discount_factor, np.arange(diff_col.shape[0], dtype=np.float32))
+    discounted_gain = float(np.sum(diff_col * weights))
+    discounted_base = float(np.sum(base_arr[:, defector_idx] * weights))
+    return float(discounted_gain / discounted_base)
+
+
 def format_deviation_table(step_diff_gains: dict[int, list[float]]) -> str:
     rng = np.random.default_rng(0)
     lines = []
@@ -144,15 +159,140 @@ def format_deviation_table(step_diff_gains: dict[int, list[float]]) -> str:
     lines.append("\\end{tabular}")
     return "\n".join(lines) + "\n"
 
+
+def nearest_grid_index(price_grid: np.ndarray, price: float) -> int:
+    return int(np.argmin(np.abs(price_grid - price)))
+
+
+def format_price_cell(value: float) -> str:
+    return f"{value:.2f}"
+
+
+def format_grid_deviation_table(
+    grid_prices: np.ndarray,
+    pre_price_counts: dict[int, int],
+    grid_discounted_gains: dict[int, dict[int, list[float]]],
+    grid_br_comparison_counts: dict[int, list[int]],
+) -> str:
+    total_pre_prices = sum(pre_price_counts.values())
+    n_price_cols = int(grid_prices.size)
+    if total_pre_prices == 0:
+        return "% No grid-deviation observations were available.\n"
+
+    col_spec = "lc" + ("c" * n_price_cols)
+    price_header = " & ".join(format_price_cell(p) for p in grid_prices)
+    row_indices = [idx for idx in range(n_price_cols) if pre_price_counts.get(idx, 0)]
+
+    lines = []
+    lines.append(f"\\begin{{tabular}}{{{col_spec}}}")
+    lines.append("\\hline")
+    lines.append(
+        f"\\multicolumn{{{n_price_cols + 2}}}{{c}}"
+        "{Panel a: Average percentage gain from the deviation "
+        "in terms of discounted profits} \\\\"
+    )
+    lines.append("\\hline")
+    lines.append(f" & & \\multicolumn{{{n_price_cols}}}{{c}}{{Deviation price}} \\\\")
+    lines.append(f"Pre-shock price & Freq. & {price_header} \\\\")
+    lines.append("\\hline")
+    for row_idx in row_indices:
+        row_gains = grid_discounted_gains.get(row_idx, {})
+        freq = pre_price_counts[row_idx] / total_pre_prices
+        cells = []
+        for col_idx in range(n_price_cols):
+            gains = row_gains.get(col_idx, [])
+            if gains:
+                cells.append(f"{100.0 * float(np.mean(gains)):.2f}")
+            else:
+                cells.append("")
+        lines.append(
+            f"{format_price_cell(grid_prices[row_idx])} & {freq:.2f} & "
+            + " & ".join(cells)
+            + " \\\\"
+        )
+
+    lines.append("\\hline")
+    lines.append(
+        f"\\multicolumn{{{n_price_cols + 2}}}{{c}}"
+        "{Panel b: Frequency of unprofitable deviations.} \\\\"
+    )
+    lines.append("\\hline")
+    lines.append(f" & & \\multicolumn{{{n_price_cols}}}{{c}}{{Deviation price}} \\\\")
+    lines.append(f"Pre-shock price & Freq. & {price_header} \\\\")
+    lines.append("\\hline")
+    for row_idx in row_indices:
+        row_gains = grid_discounted_gains.get(row_idx, {})
+        freq = pre_price_counts[row_idx] / total_pre_prices
+        cells = []
+        for col_idx in range(n_price_cols):
+            gains = row_gains.get(col_idx, [])
+            if gains:
+                gain_arr = np.asarray(gains, dtype=np.float32)
+                cells.append(f"{float(np.mean(gain_arr <= 0.0)):.2f}")
+            else:
+                cells.append("")
+        lines.append(
+            f"{format_price_cell(grid_prices[row_idx])} & {freq:.2f} & "
+            + " & ".join(cells)
+            + " \\\\"
+        )
+    lines.append("\\hline")
+    lines.append("\\end{tabular}")
+
+    consistent_prices = []
+    best_price_idx = None
+    best_share = -1.0
+    for price_idx in range(n_price_cols):
+        wins, total = grid_br_comparison_counts.get(price_idx, [0, 0])
+        if total == 0:
+            continue
+        share = wins / total
+        if share > best_share:
+            best_share = share
+            best_price_idx = price_idx
+        if wins == total:
+            consistent_prices.append(grid_prices[price_idx])
+
+    lines.append("")
+    lines.append("\\medskip")
+    lines.append("\\noindent\\textit{Static best-response comparison.} ")
+    if consistent_prices:
+        prices_text = ", ".join(format_price_cell(p) for p in consistent_prices)
+        lines.append(
+            "The following fixed-grid deviation prices are more profitable than "
+            f"the static best response in every matched observation: {prices_text}."
+        )
+    elif best_price_idx is not None:
+        lines.append(
+            "No fixed-grid deviation price is more profitable than the static "
+            "best response in every matched observation. The highest share is "
+            f"{100.0 * best_share:.2f}\\%, at deviation price "
+            f"{format_price_cell(grid_prices[best_price_idx])}."
+        )
+    else:
+        lines.append(
+            "No fixed-grid deviation price has matched static-best-response "
+            "comparisons."
+        )
+
+    return "\n".join(lines) + "\n"
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--artifacts-dir", type=Path, default=Path.cwd() / "artifacts")
     parser.add_argument("--output", type=Path, default=None)
     parser.add_argument("--multi-period-output", type=Path, default=None)
+    parser.add_argument("--grid-deviation-output", type=Path, default=None)
+    parser.add_argument(
+        "--grid-deviation-points", type=int, default=DEFAULT_GRID_DEVIATION_POINTS
+    )
     parser.add_argument("--settle-periods", type=int, default=IR_SETTLE_PERIODS)
     parser.add_argument("--pre-window-periods", type=int, default=IR_SETTLE_PERIODS)
     parser.add_argument("--raw-output", type=Path, default=None)
     args = parser.parse_args()
+    if args.grid_deviation_points <= 0:
+        parser.error("--grid-deviation-points must be positive")
 
     artifacts_dir = args.artifacts_dir
     checkpoints_dir = artifacts_dir / "checkpoints"
@@ -163,6 +303,9 @@ if __name__ == "__main__":
     multi_period_output_path = args.multi_period_output or (
         summary_dir / "multi_period_deviation_tables.tex"
     )
+    grid_deviation_output_path = args.grid_deviation_output or (
+        summary_dir / "grid_deviation_tables.tex"
+    )
 
     unique_timestamps = set()
     for path in artifacts_dir.glob("*.npy"):
@@ -172,6 +315,10 @@ if __name__ == "__main__":
 
     step_diff_gains: dict[int, list[float]] = {}
     multi_period_step_diff_gains: dict[int, list[float]] = {}
+    grid_price_values: np.ndarray | None = None
+    grid_pre_price_counts: dict[int, int] = {}
+    grid_discounted_gains: dict[int, dict[int, list[float]]] = {}
+    grid_br_comparison_counts: dict[int, list[int]] = {}
     raw_rows = []
 
     agent_kwargs = build_sac_kwargs()
@@ -259,6 +406,11 @@ if __name__ == "__main__":
             qualities = tuple(a.quality for a in env.agents)
             marginal_costs = np.array([a.marginal_cost for a in env.agents])
             eq = EquilibriumCalculator(demand=env.demand)
+            current_grid_prices = np.linspace(
+                env.min_price, env.max_price, args.grid_deviation_points
+            )
+            if grid_price_values is None:
+                grid_price_values = current_grid_prices
 
             for defector_idx, _ in enumerate(env.agents):
                 current_state_tf = tf.convert_to_tensor(
@@ -272,6 +424,17 @@ if __name__ == "__main__":
                         )
                         actions_tf.append(action_tf)
                     current_state_tf = tf.concat(actions_tf, axis=1)
+
+                pre_action_norm = float(
+                    current_state_tf.numpy().reshape(-1)[defector_idx]
+                )
+                pre_deviation_price = env._denormalize_action(pre_action_norm)
+                pre_price_idx = nearest_grid_index(
+                    current_grid_prices, pre_deviation_price
+                )
+                grid_pre_price_counts[pre_price_idx] = (
+                    grid_pre_price_counts.get(pre_price_idx, 0) + 1
+                )
 
                 base_actions_t0_list = []
                 for a in env.agents:
@@ -317,6 +480,12 @@ if __name__ == "__main__":
                 multi_period_gain = differential_gain(
                     multi_period_dev_arr, base_arr, defector_idx
                 )
+                one_period_discounted_gain = relative_discounted_gain(
+                    dev_arr,
+                    base_arr,
+                    defector_idx,
+                    DEFAULT_DISCOUNT_FACTOR,
+                )
                 raw_rows.append(
                     {
                         "run_id": ts,
@@ -328,6 +497,39 @@ if __name__ == "__main__":
                     }
                 )
 
+                for grid_price_idx, grid_price in enumerate(current_grid_prices):
+                    grid_action_norm = (
+                        2 * (grid_price - env.min_price) / price_range - 1
+                    )
+                    grid_dev_arr = rollout_deviation(
+                        env,
+                        current_state_tf,
+                        qualities,
+                        marginal_costs,
+                        defector_idx,
+                        grid_action_norm,
+                        forced_length=1,
+                    )
+                    grid_gain = relative_discounted_gain(
+                        grid_dev_arr,
+                        base_arr,
+                        defector_idx,
+                        DEFAULT_DISCOUNT_FACTOR,
+                    )
+                    if pre_price_idx not in grid_discounted_gains:
+                        grid_discounted_gains[pre_price_idx] = {}
+                    if grid_price_idx not in grid_discounted_gains[pre_price_idx]:
+                        grid_discounted_gains[pre_price_idx][grid_price_idx] = []
+                    grid_discounted_gains[pre_price_idx][grid_price_idx].append(
+                        grid_gain
+                    )
+
+                    if grid_price_idx not in grid_br_comparison_counts:
+                        grid_br_comparison_counts[grid_price_idx] = [0, 0]
+                    if grid_gain > one_period_discounted_gain + 1e-12:
+                        grid_br_comparison_counts[grid_price_idx][0] += 1
+                    grid_br_comparison_counts[grid_price_idx][1] += 1
+
                 if step not in step_diff_gains:
                     step_diff_gains[step] = []
                 step_diff_gains[step].append(one_period_gain)
@@ -338,8 +540,18 @@ if __name__ == "__main__":
 
     output_text = format_deviation_table(step_diff_gains)
     multi_period_output_text = format_deviation_table(multi_period_step_diff_gains)
+    if grid_price_values is None:
+        grid_output_text = "% No grid-deviation observations were available.\n"
+    else:
+        grid_output_text = format_grid_deviation_table(
+            grid_price_values,
+            grid_pre_price_counts,
+            grid_discounted_gains,
+            grid_br_comparison_counts,
+        )
     output_path.write_text(output_text)
     multi_period_output_path.write_text(multi_period_output_text)
+    grid_deviation_output_path.write_text(grid_output_text)
     if args.raw_output is not None:
         with args.raw_output.open("w", newline="") as raw_file:
             writer = csv.DictWriter(
@@ -357,3 +569,4 @@ if __name__ == "__main__":
             writer.writerows(raw_rows)
     print(output_text)
     print(multi_period_output_text)
+    print(grid_output_text)
