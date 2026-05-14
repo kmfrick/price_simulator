@@ -731,9 +731,6 @@ class PlotSuite:
                     discounted_gain = float(np.sum(diff_col * weights))
                     disc_base = float(np.sum(base_arr[:, defector_idx] * weights))
                     rel_discounted_gain = float(discounted_gain / disc_base)
-                    differential_gain = float(
-                        np.mean(diff_col / base_arr[:, defector_idx])
-                    )
                     all_results.append(
                         {
                             "run_id": run.run_id,
@@ -745,7 +742,6 @@ class PlotSuite:
                             "dev_prices": dev_prices_arr,
                             "discounted_profit_gain": discounted_gain,
                             "rel_discounted_profit_gain": rel_discounted_gain,
-                            "differential_profit_gain": differential_gain,
                         }
                     )
                     (
@@ -770,11 +766,6 @@ class PlotSuite:
                     multi_period_rel_discounted_gain = float(
                         multi_period_discounted_gain / disc_base
                     )
-                    multi_period_differential_gain = float(
-                        np.mean(
-                            multi_period_diff_col / base_arr[:, defector_idx]
-                        )
-                    )
                     multi_period_results.append(
                         {
                             "run_id": run.run_id,
@@ -788,10 +779,7 @@ class PlotSuite:
                             "rel_discounted_profit_gain": (
                                 multi_period_rel_discounted_gain
                             ),
-                            "differential_profit_gain": (
-                                multi_period_differential_gain
-                            ),
-                            "one_period_differential_profit_gain": differential_gain,
+                            "one_period_discounted_profit_gain": discounted_gain,
                         }
                     )
 
@@ -816,7 +804,7 @@ class PlotSuite:
                 plt.close()
             # IR for Nash equilibria
             results_for_plots = [
-                r for r in all_results if r["differential_profit_gain"] <= 0.0
+                r for r in all_results if r["discounted_profit_gain"] < 0.0
             ]
 
             ir_plot_data = self._plot_ir_price_paths(
@@ -919,7 +907,7 @@ class PlotSuite:
             multi_period_results_for_plots = [
                 r
                 for r in multi_period_results
-                if r["one_period_differential_profit_gain"] <= 0.0
+                if r["one_period_discounted_profit_gain"] < 0.0
             ]
             self._plot_ir_price_paths(
                 multi_period_results_for_plots,

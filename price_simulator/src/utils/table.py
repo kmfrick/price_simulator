@@ -117,13 +117,6 @@ def rollout_baseline(
     return np.asarray(base_profits, dtype=np.float32)
 
 
-def differential_gain(
-    dev_arr: np.ndarray, base_arr: np.ndarray, defector_idx: int
-) -> float:
-    diff_col = dev_arr[:, defector_idx] - base_arr[:, defector_idx]
-    return float(np.mean(diff_col / base_arr[:, defector_idx]))
-
-
 def relative_discounted_gain(
     dev_arr: np.ndarray,
     base_arr: np.ndarray,
@@ -137,7 +130,7 @@ def relative_discounted_gain(
     return float(discounted_gain / discounted_base)
 
 
-def format_deviation_table(step_diff_gains: dict[int, list[float]]) -> str:
+def format_deviation_table(step_discounted_gains: dict[int, list[float]]) -> str:
     rng = np.random.default_rng(0)
     lines = []
     lines.append("\\begin{tabular}{lccccc}")
@@ -149,14 +142,14 @@ def format_deviation_table(step_diff_gains: dict[int, list[float]]) -> str:
     )
     lines.append("\\hline")
 
-    for step in sorted(step_diff_gains):
-        diff_vals = np.asarray(step_diff_gains[step], dtype=np.float32)
-        if diff_vals.size == 0:
+    for step in sorted(step_discounted_gains):
+        gain_vals = np.asarray(step_discounted_gains[step], dtype=np.float32)
+        if gain_vals.size == 0:
             continue
-        p25_diff, p50_diff, p75_diff = np.percentile(diff_vals, [25, 50, 75])
-        mean_diff = float(np.mean(diff_vals))
-        unprofit_mask = diff_vals <= 0.0
-        pct_diff = 100.0 * float(np.mean(unprofit_mask))
+        p25_gain, p50_gain, p75_gain = np.percentile(gain_vals, [25, 50, 75])
+        mean_gain = float(np.mean(gain_vals))
+        unprofit_mask = gain_vals <= 0.0
+        pct_unprofit = 100.0 * float(np.mean(unprofit_mask))
         boot_indices = rng.integers(
             0, unprofit_mask.size, size=(5000, unprofit_mask.size)
         )
@@ -164,21 +157,21 @@ def format_deviation_table(step_diff_gains: dict[int, list[float]]) -> str:
         ci_low, ci_high = np.percentile(boot_props, [2.5, 97.5])
         step_label = f"\\num{{{step}}}"
 
-        p25_diff_pct = 100.0 * p25_diff
-        p50_diff_pct = 100.0 * p50_diff
-        p75_diff_pct = 100.0 * p75_diff
-        mean_diff_pct = 100.0 * mean_diff
+        p25_gain_pct = 100.0 * p25_gain
+        p50_gain_pct = 100.0 * p50_gain
+        p75_gain_pct = 100.0 * p75_gain
+        mean_gain_pct = 100.0 * mean_gain
 
-        p25_cell = f"{p25_diff_pct:.2g}\\%"
-        p50_cell = f"{p50_diff_pct:.2g}\\%"
-        p75_cell = f"{p75_diff_pct:.2g}\\%"
-        pct_cell = f"{pct_diff:.2g}\\%"
+        p25_cell = f"{p25_gain_pct:.2g}\\%"
+        p50_cell = f"{p50_gain_pct:.2g}\\%"
+        p75_cell = f"{p75_gain_pct:.2g}\\%"
+        pct_cell = f"{pct_unprofit:.2g}\\%"
         ci_cell = f"{100.0 * ci_low:.2g}\\%--{100.0 * ci_high:.2g}\\%"
         pct_ci_cell = f"{pct_cell} [{ci_cell}]"
 
         lines.append(
             f"{step_label} & {p25_cell} & {p50_cell} & {p75_cell} "
-            f"& {mean_diff_pct:.2g}\\% & {pct_ci_cell} \\\\"
+            f"& {mean_gain_pct:.2g}\\% & {pct_ci_cell} \\\\"
         )
 
     lines.append("\\hline")
@@ -306,8 +299,8 @@ def format_grid_deviation_table(
 
 def empty_timestamp_result(warnings: list[str] | None = None) -> dict[str, object]:
     return {
-        "step_diff_gains": {},
-        "multi_period_step_diff_gains": {},
+        "step_discounted_gains": {},
+        "multi_period_step_discounted_gains": {},
         "grid_price_values": None,
         "grid_pre_price_counts": {},
         "grid_discounted_gains": {},
@@ -328,8 +321,8 @@ def analyze_timestamp(
     tf = tensorflow_module()
     SACContinuous, build_sac_kwargs = sac_dependencies()
     warnings = []
-    step_diff_gains: dict[int, list[float]] = {}
-    multi_period_step_diff_gains: dict[int, list[float]] = {}
+    step_discounted_gains: dict[int, list[float]] = {}
+    multi_period_step_discounted_gains: dict[int, list[float]] = {}
     grid_price_values: np.ndarray | None = None
     grid_pre_price_counts: dict[int, int] = {}
     grid_discounted_gains: dict[int, dict[int, list[float]]] = {}
@@ -490,12 +483,14 @@ def analyze_timestamp(
                     br_action_norm,
                     forced_length=MULTI_PERIOD_DEVIATION_LENGTH,
                 )
-                one_period_gain = differential_gain(dev_arr, base_arr, defector_idx)
-                multi_period_gain = differential_gain(
-                    multi_period_dev_arr, base_arr, defector_idx
-                )
-                one_period_discounted_gain = relative_discounted_gain(
+                one_period_gain = relative_discounted_gain(
                     dev_arr,
+                    base_arr,
+                    defector_idx,
+                    DEFAULT_DISCOUNT_FACTOR,
+                )
+                multi_period_gain = relative_discounted_gain(
+                    multi_period_dev_arr,
                     base_arr,
                     defector_idx,
                     DEFAULT_DISCOUNT_FACTOR,
@@ -540,21 +535,21 @@ def analyze_timestamp(
 
                     if grid_price_idx not in grid_br_comparison_counts:
                         grid_br_comparison_counts[grid_price_idx] = [0, 0]
-                    if grid_gain > one_period_discounted_gain + 1e-12:
+                    if grid_gain > one_period_gain + 1e-12:
                         grid_br_comparison_counts[grid_price_idx][0] += 1
                     grid_br_comparison_counts[grid_price_idx][1] += 1
 
-                if step not in step_diff_gains:
-                    step_diff_gains[step] = []
-                step_diff_gains[step].append(one_period_gain)
+                if step not in step_discounted_gains:
+                    step_discounted_gains[step] = []
+                step_discounted_gains[step].append(one_period_gain)
                 if one_period_gain <= 0.0:
-                    if step not in multi_period_step_diff_gains:
-                        multi_period_step_diff_gains[step] = []
-                    multi_period_step_diff_gains[step].append(multi_period_gain)
+                    if step not in multi_period_step_discounted_gains:
+                        multi_period_step_discounted_gains[step] = []
+                    multi_period_step_discounted_gains[step].append(multi_period_gain)
 
         return {
-            "step_diff_gains": step_diff_gains,
-            "multi_period_step_diff_gains": multi_period_step_diff_gains,
+            "step_discounted_gains": step_discounted_gains,
+            "multi_period_step_discounted_gains": multi_period_step_discounted_gains,
             "grid_price_values": grid_price_values,
             "grid_pre_price_counts": grid_pre_price_counts,
             "grid_discounted_gains": grid_discounted_gains,
@@ -643,18 +638,18 @@ def iter_timestamp_results(
 
 def merge_timestamp_result(
     result: dict[str, object],
-    step_diff_gains: dict[int, list[float]],
-    multi_period_step_diff_gains: dict[int, list[float]],
+    step_discounted_gains: dict[int, list[float]],
+    multi_period_step_discounted_gains: dict[int, list[float]],
     grid_pre_price_counts: dict[int, int],
     grid_discounted_gains: dict[int, dict[int, list[float]]],
     grid_br_comparison_counts: dict[int, list[int]],
     raw_rows: list[dict[str, object]],
 ) -> np.ndarray | None:
-    for step, values in result["step_diff_gains"].items():
-        step_diff_gains.setdefault(step, []).extend(values)
+    for step, values in result["step_discounted_gains"].items():
+        step_discounted_gains.setdefault(step, []).extend(values)
 
-    for step, values in result["multi_period_step_diff_gains"].items():
-        multi_period_step_diff_gains.setdefault(step, []).extend(values)
+    for step, values in result["multi_period_step_discounted_gains"].items():
+        multi_period_step_discounted_gains.setdefault(step, []).extend(values)
 
     for price_idx, count in result["grid_pre_price_counts"].items():
         grid_pre_price_counts[price_idx] = grid_pre_price_counts.get(price_idx, 0) + count
@@ -724,8 +719,8 @@ def main(argv: list[str] | None = None) -> int:
     timestamps = sorted(unique_timestamps)
     gpu_ids = parse_gpu_ids(args.gpus)
 
-    step_diff_gains: dict[int, list[float]] = {}
-    multi_period_step_diff_gains: dict[int, list[float]] = {}
+    step_discounted_gains: dict[int, list[float]] = {}
+    multi_period_step_discounted_gains: dict[int, list[float]] = {}
     grid_price_values: np.ndarray | None = None
     grid_pre_price_counts: dict[int, int] = {}
     grid_discounted_gains: dict[int, dict[int, list[float]]] = {}
@@ -746,8 +741,8 @@ def main(argv: list[str] | None = None) -> int:
             print(warning)
         result_grid_prices = merge_timestamp_result(
             result,
-            step_diff_gains,
-            multi_period_step_diff_gains,
+            step_discounted_gains,
+            multi_period_step_discounted_gains,
             grid_pre_price_counts,
             grid_discounted_gains,
             grid_br_comparison_counts,
@@ -756,8 +751,10 @@ def main(argv: list[str] | None = None) -> int:
         if grid_price_values is None and result_grid_prices is not None:
             grid_price_values = result_grid_prices
 
-    output_text = format_deviation_table(step_diff_gains)
-    multi_period_output_text = format_deviation_table(multi_period_step_diff_gains)
+    output_text = format_deviation_table(step_discounted_gains)
+    multi_period_output_text = format_deviation_table(
+        multi_period_step_discounted_gains
+    )
     if grid_price_values is None:
         grid_output_text = "% No grid-deviation observations were available.\n"
     else:
