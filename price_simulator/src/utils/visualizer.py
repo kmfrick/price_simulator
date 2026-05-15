@@ -2,27 +2,32 @@
 from __future__ import annotations
 
 import argparse
+import concurrent.futures
+import gc
+import multiprocessing
+import os
 import re
 import sys
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import seaborn as sns
-import tensorflow as tf
 from tqdm import tqdm
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 from matplotlib.lines import Line2D
 from matplotlib.ticker import FixedLocator, StrMethodFormatter
 
-from price_simulator.src.algorithm.agents.sac import SACContinuous
 from price_simulator.src.algorithm.demand import LogitDemand
 from price_simulator.src.algorithm.environment import ContSynchronEnvironment
 from price_simulator.src.algorithm.equilibrium import EquilibriumCalculator
 from price_simulator.src.algorithm.policies import EpsilonGreedy
-from price_simulator.src.algorithm.agents.sac import build_sac_kwargs
 from price_simulator.src.utils.serializer import SimulationRun
+
+if TYPE_CHECKING:
+    import tensorflow as tf
 
 TIMESTAMP_RE = re.compile(r"(\d{8}-\d{6})")
 STEP_RE = re.compile(r"_step(\d+)", re.IGNORECASE)
@@ -36,6 +41,39 @@ MA_WINDOW = 5000
 GRID_POINTS = 50
 IR_SETTLE_PERIODS = 50
 EVAL_CHUNK_SIZE = 2048
+_TF = None
+
+
+def configure_tensorflow_runtime(gpu_id: str | None) -> None:
+    os.environ.setdefault("TF_FORCE_GPU_ALLOW_GROWTH", "true")
+    if gpu_id is not None:
+        os.environ["CUDA_VISIBLE_DEVICES"] = gpu_id
+
+
+def tensorflow_module():
+    global _TF
+    if _TF is None:
+        import tensorflow as tf
+
+        _TF = tf
+    return _TF
+
+
+def sac_dependencies():
+    from price_simulator.src.algorithm.agents.sac import SACContinuous
+    from price_simulator.src.algorithm.agents.sac import build_sac_kwargs
+
+    return SACContinuous, build_sac_kwargs
+
+
+def parse_gpu_ids(gpus: str | None) -> list[str]:
+    if gpus is None:
+        return []
+    return [gpu.strip() for gpu in gpus.split(",") if gpu.strip()]
+
+
+def init_parallel_worker(gpu_id: str | None) -> None:
+    configure_tensorflow_runtime(gpu_id)
 
 
 class PlotSuite:
@@ -64,6 +102,7 @@ class PlotSuite:
         return sorted(paths)[-1]
 
     def _build_env(self) -> ContSynchronEnvironment:
+        SACContinuous, build_sac_kwargs = sac_dependencies()
         agent_kwargs = build_sac_kwargs()
         agent_kwargs["state_dim"] = self.n_agents
         agents = [
@@ -139,6 +178,7 @@ class PlotSuite:
         forced_action_norm: float,
         forced_length: int,
     ) -> tuple[np.ndarray, np.ndarray]:
+        tf = tensorflow_module()
         dev_profits = []
         dev_prices_list = []
         state_dev_tf = current_state_tf
@@ -394,6 +434,8 @@ class PlotSuite:
         plt.close(fig)
 
     def run(self) -> int:
+        gpu_ids = parse_gpu_ids(self.args.gpus)
+
         # Compute environment parameters
         demand = LogitDemand(outside_quality=0.0, price_sensitivity=0.25)
         calc = EquilibriumCalculator(demand=demand)
@@ -410,7 +452,6 @@ class PlotSuite:
             price_max = monopoly_price + increase
             price_range = price_max - price_min
 
-            ref_env = self._build_env()
             # We need this for the phase diagram bc everything is in [-1, 1]
             # but we want to denormalize it
             phase_nash_norm = 2 * (np.array(nash_prices) - price_min) / price_range - 1
@@ -419,7 +460,8 @@ class PlotSuite:
             )
             tick_positions = [-1, -0.5, 0, 0.5, 1]
             tick_labels = [
-                f"{ref_env._denormalize_action(t):.2f}" for t in tick_positions
+                f"{(t + 1) * 0.5 * price_range + price_min:.2f}"
+                for t in tick_positions
             ]
             self.phase_context = {
                 "tick_positions": tick_positions,
@@ -597,191 +639,49 @@ class PlotSuite:
         # Plot phase diagram for each run
         runs_with_final = [run for run in runs if run.final_actor_paths]
         if runs_with_final and self.n_agents == 2:
-            price_grid = np.linspace(-1, 1, GRID_POINTS)
-            p1_grid, p2_grid = np.meshgrid(price_grid, price_grid, indexing="xy")
-            total = price_grid.size * price_grid.size
-            states = np.stack([p1_grid, p2_grid], axis=-1).reshape(-1, 2, order="F")
-            for run in tqdm(runs_with_final, desc="Policy maps"):
-                env = self._init_env_with_weights(run.final_actor_paths)
-                mapping_flat = np.zeros((total, 2), dtype=np.float32)
-                chunk_size = max(1, int(EVAL_CHUNK_SIZE))
-                for start in range(0, total, chunk_size):
-                    end = min(total, start + chunk_size)
-                    s0 = tf.convert_to_tensor(states[start:end], dtype=tf.float32)
-                    s1 = tf.convert_to_tensor(states[start:end], dtype=tf.float32)
-                    actions0, _ = env.agents[0]._sample_action_batch(  # type: ignore[attr-defined]
-                        s0, deterministic=True
-                    )
-                    actions1, _ = env.agents[1]._sample_action_batch(  # type: ignore[attr-defined]
-                        s1, deterministic=True
-                    )
-                    mapping_flat[start:end, 0] = actions0.numpy().reshape(-1)
-                    mapping_flat[start:end, 1] = actions1.numpy().reshape(-1)
-
-                n = price_grid.size
-                mapping = np.zeros((n, n, 2), dtype=np.float32)
-                mapping[:, :, 0] = mapping_flat[:, 0].reshape(n, n, order="F")
-                mapping[:, :, 1] = mapping_flat[:, 1].reshape(n, n, order="F")
-
-                deltas = mapping - np.stack([p1_grid, p2_grid], axis=-1)
-                dist_sq = (
-                    deltas[:, :, 0] * deltas[:, :, 0]
-                    + deltas[:, :, 1] * deltas[:, :, 1]
-                )
-                idx = np.unravel_index(np.argmin(dist_sq), dist_sq.shape)
-                fixed_point = (float(p1_grid[idx]), float(p2_grid[idx]))
-
-                run_dir = self.sessions_dir / run.run_id
-                run_dir.mkdir(parents=True, exist_ok=True)
-                self._plot_phase_diagram(
-                    mapping,
-                    price_grid,
-                    run_dir / "policy_phase.png",
+            policy_jobs = [
+                (
+                    run.run_id,
+                    run.final_actor_paths,
+                    self.artifacts_dir,
+                    self.n_agents,
                     self.phase_context,
-                    fixed_point=fixed_point,
                 )
+                for run in runs_with_final
+            ]
+            for _ in _iter_parallel_results(
+                policy_jobs,
+                _evaluate_policy_map_run,
+                self.args.workers,
+                gpu_ids,
+                "Policy maps",
+            ):
+                pass
 
         if runs_with_final:
             all_results = []
             multi_period_results = []
-            for run in tqdm(runs_with_final, desc="Impulse response"):
-                prices = np.asarray(run.prices, dtype=np.float32)
-                if prices.ndim == 1:
-                    prices = prices.reshape(-1, 1)
-                idx = max(0, len(prices) - 1)
-                start_idx = max(0, idx - IR_SETTLE_PERIODS)
-                steady = np.mean(prices[start_idx : idx + 1], axis=0)
-                env = self._init_env_with_weights(run.final_actor_paths)
-                qualities = tuple(a.quality for a in env.agents)
-                marginal_costs = np.array([a.marginal_cost for a in env.agents])
-                eq = EquilibriumCalculator(demand=env.demand)
-                for defector_idx, _ in enumerate(env.agents):
-                    current_state_tf = tf.convert_to_tensor(
-                        np.expand_dims(steady, axis=0),
-                        dtype=tf.float32,
-                    )
-                    pre_prices = []
-                    # Settling cycle
-                    for _ in range(IR_SETTLE_PERIODS):
-                        actions = []
-                        actions_tf = []
-                        for a in env.agents:
-                            action_tf, _ = a._sample_action(  # type: ignore[attr-defined]
-                                current_state_tf, deterministic=True, seed_step=None
-                            )
-                            actions.append(float(action_tf.numpy().reshape(-1)[0]))
-                            actions_tf.append(action_tf)
-                        real_prices = tuple(env._denormalize_action(a) for a in actions)
-                        pre_prices.append(real_prices)
-                        current_state_tf = tf.concat(actions_tf, axis=1)
-                    # Non-deviation profit
-                    base_profits = []
-                    base_prices_list = []
-                    state_base_tf = current_state_tf
-                    for _ in range(DEVIATION_HORIZON_T):
-                        base_actions = []
-                        base_actions_tf = []
-                        for a in env.agents:
-                            action_tf, _ = a._sample_action(
-                                state_base_tf, deterministic=True, seed_step=None
-                            )
-                            base_actions.append(float(action_tf.numpy().reshape(-1)[0]))
-                            base_actions_tf.append(action_tf)
-                        base_real_prices = tuple(
-                            env._denormalize_action(a) for a in base_actions
-                        )
-                        base_qs = env.demand.get_quantities(base_real_prices, qualities)
-                        base_rews = tuple(
-                            np.multiply(
-                                np.subtract(base_real_prices, marginal_costs), base_qs
-                            )
-                        )
-                        base_profits.append(base_rews)
-                        base_prices_list.append(base_real_prices)
-                        state_base_tf = tf.concat(base_actions_tf, axis=1)
-
-                    base_arr = np.asarray(base_profits, dtype=np.float32)
-                    price_range = env.max_price - env.min_price
-                    pre_prices_arr = np.asarray(pre_prices, dtype=np.float32)
-                    br_price_t0 = eq.reaction_function(
-                        prices=np.array(pre_prices_arr[-1]),
-                        qualities=np.array(qualities),
-                        marginal_costs=marginal_costs,
-                        i=defector_idx,
-                    )
-                    br_action_norm_t0 = (
-                        2 * (br_price_t0 - env.min_price) / price_range - 1
-                    )
-                    defect_t = 0
-                    br_action_norm = br_action_norm_t0
-                    dev_arr, dev_prices_arr = self._rollout_deviation(
-                        env,
-                        current_state_tf,
-                        qualities,
-                        marginal_costs,
-                        defector_idx,
-                        br_action_norm,
-                        forced_length=1,
-                    )
-                    diff_col = dev_arr[:, defector_idx] - base_arr[:, defector_idx]
-                    weights = np.power(
-                        DEFAULT_DISCOUNT_FACTOR,
-                        np.arange(diff_col.shape[0], dtype=np.float32),
-                    )
-                    discounted_gain = float(np.sum(diff_col * weights))
-                    disc_base = float(np.sum(base_arr[:, defector_idx] * weights))
-                    rel_discounted_gain = float(discounted_gain / disc_base)
-                    all_results.append(
-                        {
-                            "run_id": run.run_id,
-                            "defector_idx": defector_idx,
-                            "defect_t": defect_t,
-                            "pre_prices": np.asarray(pre_prices_arr, dtype=np.float32),
-                            "dev_profits": dev_arr,
-                            "base_profits": base_arr,
-                            "dev_prices": dev_prices_arr,
-                            "discounted_profit_gain": discounted_gain,
-                            "rel_discounted_profit_gain": rel_discounted_gain,
-                        }
-                    )
-                    (
-                        multi_period_dev_arr,
-                        multi_period_dev_prices_arr,
-                    ) = self._rollout_deviation(
-                        env,
-                        current_state_tf,
-                        qualities,
-                        marginal_costs,
-                        defector_idx,
-                        br_action_norm,
-                        forced_length=MULTI_PERIOD_DEVIATION_LENGTH,
-                    )
-                    multi_period_diff_col = (
-                        multi_period_dev_arr[:, defector_idx]
-                        - base_arr[:, defector_idx]
-                    )
-                    multi_period_discounted_gain = float(
-                        np.sum(multi_period_diff_col * weights)
-                    )
-                    multi_period_rel_discounted_gain = float(
-                        multi_period_discounted_gain / disc_base
-                    )
-                    multi_period_results.append(
-                        {
-                            "run_id": run.run_id,
-                            "defector_idx": defector_idx,
-                            "deviation_length": MULTI_PERIOD_DEVIATION_LENGTH,
-                            "pre_prices": np.asarray(pre_prices_arr, dtype=np.float32),
-                            "dev_profits": multi_period_dev_arr,
-                            "base_profits": base_arr,
-                            "dev_prices": multi_period_dev_prices_arr,
-                            "discounted_profit_gain": multi_period_discounted_gain,
-                            "rel_discounted_profit_gain": (
-                                multi_period_rel_discounted_gain
-                            ),
-                            "one_period_discounted_profit_gain": discounted_gain,
-                        }
-                    )
+            impulse_jobs = [
+                (
+                    run.run_id,
+                    run.prices,
+                    run.final_actor_paths,
+                    self.artifacts_dir,
+                    self.n_agents,
+                )
+                for run in runs_with_final
+            ]
+            for result in _iter_parallel_results(
+                impulse_jobs,
+                _evaluate_impulse_response_run,
+                self.args.workers,
+                gpu_ids,
+                "Impulse response",
+            ):
+                all_results.extend(result["all_results"])
+                multi_period_results.extend(result["multi_period_results"])
+            all_results.sort(key=lambda r: (r["run_id"], r["defector_idx"]))
+            multi_period_results.sort(key=lambda r: (r["run_id"], r["defector_idx"]))
 
             rel_disc_profits = (
                 np.asarray(
@@ -919,11 +819,290 @@ class PlotSuite:
         return 0
 
 
+def _worker_suite(artifacts_dir: Path, n_agents: int) -> PlotSuite:
+    args = argparse.Namespace(artifacts_dir=artifacts_dir, n_agents=n_agents)
+    return PlotSuite(args)
+
+
+def _clear_tensorflow_session() -> None:
+    if _TF is not None:
+        _TF.keras.backend.clear_session()
+    gc.collect()
+
+
+def _evaluate_policy_map_run(
+    run_id: str,
+    final_actor_paths: list[Path],
+    artifacts_dir: Path,
+    n_agents: int,
+    phase_context: dict[str, object],
+) -> str:
+    try:
+        tf = tensorflow_module()
+        suite = _worker_suite(artifacts_dir, n_agents)
+        price_grid = np.linspace(-1, 1, GRID_POINTS)
+        p1_grid, p2_grid = np.meshgrid(price_grid, price_grid, indexing="xy")
+        total = price_grid.size * price_grid.size
+        states = np.stack([p1_grid, p2_grid], axis=-1).reshape(-1, 2, order="F")
+
+        env = suite._init_env_with_weights(final_actor_paths)
+        mapping_flat = np.zeros((total, 2), dtype=np.float32)
+        chunk_size = max(1, int(EVAL_CHUNK_SIZE))
+        for start in range(0, total, chunk_size):
+            end = min(total, start + chunk_size)
+            s0 = tf.convert_to_tensor(states[start:end], dtype=tf.float32)
+            s1 = tf.convert_to_tensor(states[start:end], dtype=tf.float32)
+            actions0, _ = env.agents[0]._sample_action_batch(  # type: ignore[attr-defined]
+                s0, deterministic=True
+            )
+            actions1, _ = env.agents[1]._sample_action_batch(  # type: ignore[attr-defined]
+                s1, deterministic=True
+            )
+            mapping_flat[start:end, 0] = actions0.numpy().reshape(-1)
+            mapping_flat[start:end, 1] = actions1.numpy().reshape(-1)
+
+        n = price_grid.size
+        mapping = np.zeros((n, n, 2), dtype=np.float32)
+        mapping[:, :, 0] = mapping_flat[:, 0].reshape(n, n, order="F")
+        mapping[:, :, 1] = mapping_flat[:, 1].reshape(n, n, order="F")
+
+        deltas = mapping - np.stack([p1_grid, p2_grid], axis=-1)
+        dist_sq = (
+            deltas[:, :, 0] * deltas[:, :, 0]
+            + deltas[:, :, 1] * deltas[:, :, 1]
+        )
+        idx = np.unravel_index(np.argmin(dist_sq), dist_sq.shape)
+        fixed_point = (float(p1_grid[idx]), float(p2_grid[idx]))
+
+        run_dir = suite.sessions_dir / run_id
+        run_dir.mkdir(parents=True, exist_ok=True)
+        suite._plot_phase_diagram(
+            mapping,
+            price_grid,
+            run_dir / "policy_phase.png",
+            phase_context,
+            fixed_point=fixed_point,
+        )
+        return run_id
+    finally:
+        _clear_tensorflow_session()
+
+
+def _evaluate_impulse_response_run(
+    run_id: str,
+    prices: np.ndarray,
+    final_actor_paths: list[Path],
+    artifacts_dir: Path,
+    n_agents: int,
+) -> dict[str, object]:
+    try:
+        tf = tensorflow_module()
+        suite = _worker_suite(artifacts_dir, n_agents)
+        all_results = []
+        multi_period_results = []
+
+        prices = np.asarray(prices, dtype=np.float32)
+        if prices.ndim == 1:
+            prices = prices.reshape(-1, 1)
+        idx = max(0, len(prices) - 1)
+        start_idx = max(0, idx - IR_SETTLE_PERIODS)
+        steady = np.mean(prices[start_idx : idx + 1], axis=0)
+        env = suite._init_env_with_weights(final_actor_paths)
+        qualities = tuple(a.quality for a in env.agents)
+        marginal_costs = np.array([a.marginal_cost for a in env.agents])
+        eq = EquilibriumCalculator(demand=env.demand)
+        for defector_idx, _ in enumerate(env.agents):
+            current_state_tf = tf.convert_to_tensor(
+                np.expand_dims(steady, axis=0),
+                dtype=tf.float32,
+            )
+            pre_prices = []
+            # Settling cycle
+            for _ in range(IR_SETTLE_PERIODS):
+                actions = []
+                actions_tf = []
+                for a in env.agents:
+                    action_tf, _ = a._sample_action(  # type: ignore[attr-defined]
+                        current_state_tf, deterministic=True, seed_step=None
+                    )
+                    actions.append(float(action_tf.numpy().reshape(-1)[0]))
+                    actions_tf.append(action_tf)
+                real_prices = tuple(env._denormalize_action(a) for a in actions)
+                pre_prices.append(real_prices)
+                current_state_tf = tf.concat(actions_tf, axis=1)
+            # Non-deviation profit
+            base_profits = []
+            state_base_tf = current_state_tf
+            for _ in range(DEVIATION_HORIZON_T):
+                base_actions = []
+                base_actions_tf = []
+                for a in env.agents:
+                    action_tf, _ = a._sample_action(
+                        state_base_tf, deterministic=True, seed_step=None
+                    )
+                    base_actions.append(float(action_tf.numpy().reshape(-1)[0]))
+                    base_actions_tf.append(action_tf)
+                base_real_prices = tuple(
+                    env._denormalize_action(a) for a in base_actions
+                )
+                base_qs = env.demand.get_quantities(base_real_prices, qualities)
+                base_rews = tuple(
+                    np.multiply(np.subtract(base_real_prices, marginal_costs), base_qs)
+                )
+                base_profits.append(base_rews)
+                state_base_tf = tf.concat(base_actions_tf, axis=1)
+
+            base_arr = np.asarray(base_profits, dtype=np.float32)
+            price_range = env.max_price - env.min_price
+            pre_prices_arr = np.asarray(pre_prices, dtype=np.float32)
+            br_price_t0 = eq.reaction_function(
+                prices=np.array(pre_prices_arr[-1]),
+                qualities=np.array(qualities),
+                marginal_costs=marginal_costs,
+                i=defector_idx,
+            )
+            br_action_norm_t0 = 2 * (br_price_t0 - env.min_price) / price_range - 1
+            defect_t = 0
+            br_action_norm = br_action_norm_t0
+            dev_arr, dev_prices_arr = suite._rollout_deviation(
+                env,
+                current_state_tf,
+                qualities,
+                marginal_costs,
+                defector_idx,
+                br_action_norm,
+                forced_length=1,
+            )
+            diff_col = dev_arr[:, defector_idx] - base_arr[:, defector_idx]
+            weights = np.power(
+                DEFAULT_DISCOUNT_FACTOR,
+                np.arange(diff_col.shape[0], dtype=np.float32),
+            )
+            discounted_gain = float(np.sum(diff_col * weights))
+            disc_base = float(np.sum(base_arr[:, defector_idx] * weights))
+            rel_discounted_gain = float(discounted_gain / disc_base)
+            all_results.append(
+                {
+                    "run_id": run_id,
+                    "defector_idx": defector_idx,
+                    "defect_t": defect_t,
+                    "pre_prices": np.asarray(pre_prices_arr, dtype=np.float32),
+                    "dev_profits": dev_arr,
+                    "base_profits": base_arr,
+                    "dev_prices": dev_prices_arr,
+                    "discounted_profit_gain": discounted_gain,
+                    "rel_discounted_profit_gain": rel_discounted_gain,
+                }
+            )
+            (
+                multi_period_dev_arr,
+                multi_period_dev_prices_arr,
+            ) = suite._rollout_deviation(
+                env,
+                current_state_tf,
+                qualities,
+                marginal_costs,
+                defector_idx,
+                br_action_norm,
+                forced_length=MULTI_PERIOD_DEVIATION_LENGTH,
+            )
+            multi_period_diff_col = (
+                multi_period_dev_arr[:, defector_idx] - base_arr[:, defector_idx]
+            )
+            multi_period_discounted_gain = float(
+                np.sum(multi_period_diff_col * weights)
+            )
+            multi_period_rel_discounted_gain = float(
+                multi_period_discounted_gain / disc_base
+            )
+            multi_period_results.append(
+                {
+                    "run_id": run_id,
+                    "defector_idx": defector_idx,
+                    "deviation_length": MULTI_PERIOD_DEVIATION_LENGTH,
+                    "pre_prices": np.asarray(pre_prices_arr, dtype=np.float32),
+                    "dev_profits": multi_period_dev_arr,
+                    "base_profits": base_arr,
+                    "dev_prices": multi_period_dev_prices_arr,
+                    "discounted_profit_gain": multi_period_discounted_gain,
+                    "rel_discounted_profit_gain": multi_period_rel_discounted_gain,
+                    "one_period_discounted_profit_gain": discounted_gain,
+                }
+            )
+
+        return {
+            "run_id": run_id,
+            "all_results": all_results,
+            "multi_period_results": multi_period_results,
+        }
+    finally:
+        _clear_tensorflow_session()
+
+
+def _iter_parallel_results(
+    jobs: list[tuple],
+    worker_fn,
+    workers: int,
+    gpu_ids: list[str],
+    desc: str,
+):
+    if not jobs:
+        return
+
+    if workers == 1:
+        gpu_id = gpu_ids[0] if gpu_ids else None
+        configure_tensorflow_runtime(gpu_id)
+        for job in tqdm(jobs, total=len(jobs), desc=desc):
+            yield worker_fn(*job)
+        return
+
+    ctx = multiprocessing.get_context("spawn")
+    executors = []
+    futures = []
+    try:
+        worker_count = min(workers, len(jobs))
+        for worker_idx in range(worker_count):
+            gpu_id = gpu_ids[worker_idx % len(gpu_ids)] if gpu_ids else None
+            executors.append(
+                concurrent.futures.ProcessPoolExecutor(
+                    max_workers=1,
+                    mp_context=ctx,
+                    initializer=init_parallel_worker,
+                    initargs=(gpu_id,),
+                )
+            )
+
+        for idx, job in enumerate(jobs):
+            executor = executors[idx % len(executors)]
+            futures.append(executor.submit(worker_fn, *job))
+
+        completed = concurrent.futures.as_completed(futures)
+        for future in tqdm(completed, total=len(futures), desc=desc):
+            yield future.result()
+    finally:
+        for executor in executors:
+            executor.shutdown(wait=True, cancel_futures=False)
+
+
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--artifacts-dir", type=Path, default=Path.cwd() / "artifacts")
     parser.add_argument("--n-agents", type=int, default=2)
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=1,
+        help="Number of timestamp workers. Use --gpus to pin workers to GPUs.",
+    )
+    parser.add_argument(
+        "--gpus",
+        type=str,
+        default=None,
+        help="Comma-separated GPU ids assigned to workers round-robin, e.g. 0,1.",
+    )
     args = parser.parse_args(argv)
+    if args.workers <= 0:
+        parser.error("--workers must be positive")
 
     return PlotSuite(args).run()
 
